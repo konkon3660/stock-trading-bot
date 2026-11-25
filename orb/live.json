@@ -1,5 +1,6 @@
 {
   "perTradeUsd": "all",
+  "gapSlots": 5,
   "maxEntriesPerDay": 5,
   "maxOpenPositions": 1,
   "dailyLossLimitUsd": 3,

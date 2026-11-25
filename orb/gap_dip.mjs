@@ -7,10 +7,11 @@
 //   PC가 잠들지 않게:  powershell -ExecutionPolicy Bypass -File .\orb\run_gap.ps1 [--live]
 // 규칙 (백테스트 history/mine/build_gap.py·search_gap.py, 2년 1,148건 거래당 +0.94% t=3.4, 비용 1.5배 +0.70%, 25개월 중 18개월 플러스):
 //   후보: 시가가 전일 종가보다 15% 이상 높고 시가 $1~3, ETN·레버리지/인버스 ETF 제외 (실전은 종류를 모르면 제외)
-//   매수: 시가 × 0.95에 지정가 (14:30까지 안 걸리면 취소). 돈이 한 종목치라 갭 큰 종목부터 하나씩
+//   매수: 시가 × 0.95에 지정가 (14:30까지 안 걸리면 취소). 갭 큰 후보 최대 gapSlots(live.json, 기본 5)개에 현금을 나눠 동시에 걸음 (2026-11-26, history/mine/bot_policy_gap.py)
 //         이미 그 가격을 찍고 다시 올라간 종목은 안 쫓아감 (백테스트는 처음 닿을 때 삼)
+//   부분 익절·부분 손절·물타기·크게 가는 종목 남기기는 다 시험했는데 지금 규칙보다 못함 (variants7_gap.py·variants8_gap.py·runner_select_gap.py)
 //   청산: 체결가 +10%에 지정가 매도를 바로 걸어 둠 / 현재가가 체결가 -20% 이하면 매도 (2026-11-21 -5%→-20%: history/mine/variants2_gap.py 실전식 2년 +1.87%/거래, -5%는 +0.61%) / 15:58 남은 것 매도
-// 실전 안전장치 (orb/live.json): 거래당 금액, 하루 진입 횟수, 하루·누적 손실 한도. orb/STOP_GAP 파일 → 새로 안 삼, orb/FLATTEN_GAP → 지금 다 팜
+// 실전 안전장치 (orb/live.json): 거래당 금액, 하루 진입 횟수, 하루·누적 손실 한도(갭·애프터장 합계). orb/STOP_GAP 파일 → 새로 안 삼, orb/FLATTEN_GAP → 지금 다 팜
 //   이 스크립트가 산 수량만 팜(다른 보유 종목은 안 건드림). 손절 매도는 매수호가-0.5% → -1.5% → 시장가.
 import { readFileSync, appendFileSync, existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -29,6 +30,7 @@ const LIM_FILE = process.env.ORB_LIVE_JSON || join(HERE, 'live.json');
 const L = LIVE ? JSON.parse(readFileSync(LIM_FILE, 'utf8').replace(/^﻿/, '')) : null;
 const ALL_CASH = L?.perTradeUsd === 'all'; // 2026-11-23 사용자: "내 모든 돈을 봇이 관리" → 살 때마다 주문 가능 달러 현금 전부(×0.98)
 if (L) G.notional = ALL_CASH ? 0 : L.perTradeUsd;
+const SLOTS = Number(L?.gapSlots ?? 5); // 갭 봇이 하루에 낼 매수 주문 수 = 현금을 나누는 수
 const STOP_F = join(HERE, 'STOP_GAP'), FLAT_F = join(HERE, 'FLATTEN_GAP');
 
 // ---------- 시간 ----------
@@ -53,6 +55,10 @@ function csvRow(row) { const p = join(DATA, 'trades.csv'); if (!existsSync(p)) a
 const STATE_F = join(DATA, 'state.json');
 const loadState = () => { try { return JSON.parse(readFileSync(STATE_F, 'utf8') || '{}'); } catch { return {}; } };
 const saveState = s => { writeFileSync(STATE_F + '.tmp', JSON.stringify(s, null, 1)); renameSync(STATE_F + '.tmp', STATE_F); };
+const stateOf = kind => join(HERE, `data-${kind}${MOCK ? '-mock' : ''}${LIVE ? '-live' : ''}`, 'state.json');
+const readState = f => { try { return JSON.parse(readFileSync(f, 'utf8') || '{}'); } catch { return {}; } };
+// 손실 한도는 갭 봇·애프터장 봇 합계로 셈 (2026-11-26: 따로 세면 둘이 합쳐 하루 $6·누적 $20 = 계좌 거의 전부). 같은 ET 날짜끼리 더함
+function lossBoth(own, date) { const o = readState(stateOf(AH ? 'gap' : 'ah')); return { day: (own.days?.[date]?.pnl ?? 0) + (o.days?.[date]?.pnl ?? 0), cum: (own.cum ?? 0) + (o.cum ?? 0) }; }
 
 // ---------- 토스 (orb_paper.mjs와 같은 연결 코드) ----------
 function loadEnv() {
@@ -121,7 +127,7 @@ function liveProvider() {
     async prices(symbols) { const out = new Map(); for (let i = 0; i < symbols.length; i += 200) for (const x of (await get('/api/v1/prices', { symbols: symbols.slice(i, i + 200).join(',') })) ?? []) out.set(x.symbol, num(x.lastPrice)); return out; },
     async candles(symbol, interval, count) { return normBars((await get('/api/v1/candles', { symbol, interval, count }))?.candles); },
     async orderbook(symbol) { return normBook(await get('/api/v1/orderbook', { symbol })); },
-    async stockTypes(symbols) { const out = new Map(); for (let i = 0; i < symbols.length; i += 200) for (const x of (await get('/api/v1/stocks', { symbols: symbols.slice(i, i + 200).join(',') })) ?? []) out.set(x.symbol, { type: x.securityType ?? null, lev: x.leverageFactor == null ? null : num(x.leverageFactor) }); return out; },
+    async stockTypes(symbols) { const out = new Map(); for (let i = 0; i < symbols.length; i += 200) for (const x of (await get('/api/v1/stocks', { symbols: symbols.slice(i, i + 200).join(',') })) ?? []) out.set(x.symbol, { type: x.securityType ?? null, lev: x.leverageFactor == null ? null : num(x.leverageFactor), shares: num(x.sharesOutstanding) }); return out; },
     async placeOrder(body) { return call('POST', '/api/v1/orders', { body, account: true }); },
     async getOrder(id) { return normOrder(await call('GET', `/api/v1/orders/${encodeURIComponent(id)}`, { account: true })); },
     async cancelOrder(id) { return call('POST', `/api/v1/orders/${encodeURIComponent(id)}/cancel`, { body: {}, account: true }); },
@@ -272,27 +278,33 @@ async function findCandidates(P, sess, seen) {
     const gap = o / pc - 1;
     if (!(gap >= G.gapMin && o >= G.pxMin && o < G.pxMax)) continue;
     const level = downTick(o * (1 - G.dip)), ft = bars.find(b => b.l < level);
-    out.push({ s: x.symbol, pc, pcT: pcx.t, o, gap, level, touchedAt: ft ? ft.t - MIN : null });   // 지정가에 처음 닿은 시각 (분봉 시작 시각)
+    out.push({ s: x.symbol, pc, pcT: pcx.t, o, gap, level, touchedAt: ft ? ft.t - MIN : null, sh: t?.shares });   // touchedAt: 지정가에 처음 닿은 시각 (분봉 시작 시각)
   }
-  log(`후보 찾기: 순위 종목 ${fresh.length}개 확인 (레버리지·인버스 ETF/ETN·종류 모름 ${risky}개 제외) → 갭 +${G.gapMin * 100}%↑·시가 $${G.pxMin}~${G.pxMax} ${out.length}개${out.length ? ': ' + out.map(c => `${c.s}(갭 ${pct(c.gap)}, 전일종가 $${c.pc}[일봉 ${kst(c.pcT)}], 시가 $${c.o}, 지정가 $${fmtPx(c.level)})`).join(', ') : ''}`);
+  log(`후보 찾기: 순위 종목 ${fresh.length}개 확인 (레버리지·인버스 ETF/ETN·종류 모름 ${risky}개 제외) → 갭 +${G.gapMin * 100}%↑·시가 $${G.pxMin}~${G.pxMax} ${out.length}개${out.length ? ': ' + out.map(c => `${c.s}(갭 ${pct(c.gap)}, 전일종가 $${c.pc}[일봉 ${kst(c.pcT)}], 시가 $${c.o}, 지정가 $${fmtPx(c.level)}${c.sh > 0 ? `, 주식 수 ${(c.sh / 1e6).toFixed(1)}M` : ''})`).join(', ') : ''}`); // 주식 수: 크게 가는 종목 연구용 기록 (2026-11-26)
   return out;
 }
 
+// 2026-11-26: '현금 전부로 한 종목씩' → '갭 큰 후보 최대 SLOTS개에 현금을 나눠 동시에 지정가' (history/mine/bot_policy_gap.py, 2년:
+//   한 종목씩 하루 +1.29% t=1.6 최대 낙폭 -94% / 5개 나눠 +1.41% t=4.1 낙폭 -39% — $22 계좌 최소 수수료 반영). 종목(leg)마다 목표·손절·마감 따로 관리
 async function runDay(P, sess) {
   const S = LIVE ? loadState() : {}; S.cum ??= 0; S.days ??= {};
-  const D = (S.days[sess.date] ??= { entries: 0, pnl: 0, done: [] });
-  let pos = S.pos?.date === sess.date ? S.pos : null, buy = S.buy?.date === sess.date ? S.buy : null;
+  const D = (S.days[sess.date] ??= { entries: 0, pnl: 0, done: [] }); D.orders ??= 0;
+  const legs = S.legDate === sess.date ? [...(S.legs ?? [])] : [];
+  for (const [k, st] of [['buy', 'buy'], ['pos', 'hold']]) if (S[k]?.date === sess.date) legs.push({ ...S[k], st }); // 예전(한 종목) 형식으로 저장된 오늘 주문·보유
+  delete S.pos; delete S.buy;
   const done = new Set(D.done), seen = new Set(), cands = [];
-  const persist = () => { if (LIVE) { S.pos = pos; S.buy = buy; D.done = [...done]; saveState(S); } };
+  const active = () => legs.filter(g => g.st !== 'done');
+  const persist = () => { if (LIVE) { S.legs = active(); S.legDate = sess.date; D.done = [...done]; saveState(S); } };
   if (now() < sess.open + 20_000) { log(`9:30 첫 분봉을 기다림 (${kst(sess.open + 20_000)}부터 후보 찾기)`); while (now() < sess.open + 20_000) await sleep(Math.min(10 * MIN, sess.open + 20_000 - now())); }
-  const lastEntry = sess.open + G.lastEntryMin * MIN, flatAt = sess.close - 2 * MIN;
+  const lastEntry = sess.open + G.lastEntryMin * MIN, flatAt = sess.close - 2 * MIN, tag = sess.date.replace(/-/g, '');
   let scans = 0, nextScan = now(), lastStatus = 0, lastBlock = '';
   const blocked = () => {
     if (existsSync(STOP_F)) return 'STOP_GAP 파일';
     if (!LIVE) return null;
     if (D.entries >= L.maxEntriesPerDay) return `하루 진입 ${L.maxEntriesPerDay}회`;
-    if (D.pnl <= -L.dailyLossLimitUsd) return `하루 손실 한도 $${L.dailyLossLimitUsd}`;
-    if (S.cum <= -L.totalLossLimitUsd) return `누적 손실 한도 $${L.totalLossLimitUsd}`;
+    const b = lossBoth(S, sess.date);
+    if (b.day <= -L.dailyLossLimitUsd) return `하루 손실 한도 $${L.dailyLossLimitUsd} (갭·애프터장 합계 $${b.day.toFixed(2)})`;
+    if (b.cum <= -L.totalLossLimitUsd) return `누적 손실 한도 $${L.totalLossLimitUsd} (갭·애프터장 합계 $${b.cum.toFixed(2)})`;
     return null;
   };
   // --- 청산 기록 ---
@@ -301,108 +313,118 @@ async function runDay(P, sess) {
     const pnl = qty * px - sf - (qty * p.px + bf), net = pnl / (qty * p.px);
     const theo = (reason === '목표' ? p.target : reason === '손절' ? p.stop : px) / p.level - 1;
     csvRow([sess.date, p.s, r4(p.pc), r4(p.o), pct(p.gap), r4(p.level), kst(p.orderT), kst(p.t), r4(p.px), qty, r4(p.target), r4(p.stop), kst(now()), reason, r4(px),
-      reason === '손절' ? pct(px / p.stop - 1) : '', pct(px / p.px - 1), pct(net), pct(theo), pnl.toFixed(2), `${p.buyId || ''} ${ids || ''}`.trim()]);
+      reason === '손절' ? pct(px / p.stop - 1) : '', pct(px / p.px - 1), pct(net), pct(theo), pnl.toFixed(2), `${p.id || p.buyId || ''} ${ids || ''}`.trim()]);
     D.pnl += pnl; S.cum += pnl;
     log(`${p.s} 청산(${reason}) ${qty}주 $${r4(px)} → ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pct(net)})${LIVE ? ` | 오늘 $${D.pnl.toFixed(2)}, 누적 $${S.cum.toFixed(2)}` : ''}`);
   }
   // --- 보유 관리: 목표 지정가 체결 확인, 손절·마감·수동 정리 ---
-  async function manage(lp) {
-    const p = pos;
+  async function manage(p, lp) {
     if (LIVE && p.targetId) {
       let o = null; try { o = await P.getOrder(p.targetId); } catch (e) { log(`${p.s} 목표 주문 조회 실패: ${e.message}`); }
       if (o && o.filled > (p.tgtCounted || 0)) { const q = o.filled - (p.tgtCounted || 0); record(p, '목표', q, o.avgPx, p.targetId, feeOf(o) * q / o.filled); p.tgtCounted = o.filled; p.qty -= q; persist(); }
-      if (o && o.status === 'FILLED' || p.qty <= 0) { pos = null; persist(); return; }
+      if (o && o.status === 'FILLED' || p.qty <= 0) { p.st = 'done'; persist(); return; }
     }
-    if (!LIVE && lp >= p.target) { record(p, '목표', p.qty, p.target, ''); pos = null; return; }
+    if (!LIVE && lp >= p.target) { record(p, '목표', p.qty, p.target, ''); p.st = 'done'; return; }
     const flatten = existsSync(FLAT_F), reason = flatten ? '수동정리' : now() >= flatAt ? '마감' : lp <= p.stop ? '손절' : null;
     if (!reason) return;
-    if (!LIVE) { let bid = lp; try { bid = (await P.orderbook(p.s)).bids[0]?.p ?? lp; } catch { /* 현재가로 */ } record(p, reason, p.qty, bid, ''); pos = null; return; }
+    if (!LIVE) { let bid = lp; try { bid = (await P.orderbook(p.s)).bids[0]?.p ?? lp; } catch { /* 현재가로 */ } record(p, reason, p.qty, bid, ''); p.st = 'done'; return; }
     if (p.targetId) { // 목표 주문부터 거둬들이고 (그 사이 체결된 건 목표로 기록) 남은 수량만 팜
       const o = await cancelAndSettle(P, p.targetId);
       if (!settled(o)) { log(`${p.s} 목표 주문 취소가 아직 확정 안 됨 — 다음 확인 때 다시`); return; }
       if (o.filled > (p.tgtCounted || 0)) { const q = o.filled - (p.tgtCounted || 0); record(p, '목표', q, o.avgPx, p.targetId, feeOf(o) * q / o.filled); p.qty -= q; }
       p.targetId = null; p.tgtCounted = 0; persist();
-      if (p.qty <= 0) { pos = null; persist(); return; }
+      if (p.qty <= 0) { p.st = 'done'; persist(); return; }
     }
     if (p.pendingSell) {
       let o = null; try { o = await P.getOrder(p.pendingSell); } catch { /* 다음에 */ }
       if (!settled(o)) o = await cancelAndSettle(P, p.pendingSell);
       if (!settled(o)) { log(`${p.s} 매도 주문이 아직 처리 중 — 다음 확인 때 다시`); return; }
       if (o.filled > 0) { record(p, reason, o.filled, o.avgPx, p.pendingSell, feeOf(o)); p.qty -= o.filled; }
-      p.pendingSell = null; persist(); if (p.qty <= 0) { pos = null; persist(); return; }
+      p.pendingSell = null; persist(); if (p.qty <= 0) { p.st = 'done'; persist(); return; }
     }
-    const r = await liveSell(P, p.s, p.qty, `gap${sess.date.replace(/-/g, '')}${p.s}S${p.tries = (p.tries || 0) + 1}`);
+    const r = await liveSell(P, p.s, p.qty, `gap${tag}${p.s}S${p.tries = (p.tries || 0) + 1}`);
     if (r.pendingId) p.pendingSell = r.pendingId;
     if (r.sold > 0) { record(p, reason, r.sold, r.avgPx, r.ids.join(' '), r.fees); p.qty -= r.sold; }
     else if (!r.pendingId) log(`${p.s} ${reason} 매도가 안 됨 — 다음 확인 때 다시 (토스 앱에서도 확인해 주세요)`);
-    if (p.qty <= 0) pos = null; persist();
+    if (p.qty <= 0) p.st = 'done'; persist();
   }
   // --- 매수 체결 → 보유로 전환, 목표 지정가 매도 걸기 ---
-  async function onFilled(b, qty, px, buyFee) {
-    pos = { ...b, t: now(), px, qty, qty0: qty, buyFee, stop: px * (1 - G.sl), target: downTick(px * (1 + G.tp)), targetId: null, tgtCounted: 0 }; buy = null; D.entries++;
-    log(`${b.s} ${LIVE ? '실제 ' : ''}매수 체결 ${qty}주 $${r4(px)} (시가 $${b.o}, 지정가 $${fmtPx(b.level)}) → 목표 $${fmtPx(pos.target)}, 손절 $${r4(pos.stop)}`);
+  async function onFilled(g, qty, px, buyFee) {
+    Object.assign(g, { st: 'hold', t: now(), px, qty, qty0: qty, buyFee, stop: px * (1 - G.sl), target: downTick(px * (1 + G.tp)), targetId: null, tgtCounted: 0 }); D.entries++;
+    log(`${g.s} ${LIVE ? '실제 ' : ''}매수 체결 ${qty}주 $${r4(px)} (시가 $${g.o}, 지정가 $${fmtPx(g.level)}) → 목표 $${fmtPx(g.target)}, 손절 $${r4(g.stop)}`);
     if (LIVE) {
-      try { const r = await P.placeOrder({ symbol: b.s, side: 'SELL', orderType: 'LIMIT', timeInForce: 'DAY', quantity: String(qty), price: fmtPx(pos.target), clientOrderId: `gap${sess.date.replace(/-/g, '')}${b.s}T` }); pos.targetId = r.orderId; }
-      catch (e) { log(`${b.s} 목표 지정가 매도 주문 실패: ${e.message} — 손절·마감만으로 관리`); }
+      try { g.targetId = (await P.placeOrder({ symbol: g.s, side: 'SELL', orderType: 'LIMIT', timeInForce: 'DAY', quantity: String(qty), price: fmtPx(g.target), clientOrderId: `gap${tag}${g.s}T` })).orderId; }
+      catch (e) { log(`${g.s} 목표 지정가 매도 주문 실패: ${e.message} — 손절·마감만으로 관리`); }
     }
     persist();
   }
-  async function checkBuy(lp) {
-    if (!LIVE) { if (lp <= buy.level) await onFilled(buy, buy.qty, buy.level); else if (now() >= lastEntry) { log(`${buy.s} 14:30까지 지정가 안 닿음 — 주문 취소`); buy = null; } return; }
-    let o = null; try { o = await P.getOrder(buy.id); } catch (e) { log(`${buy.s} 매수 주문 조회 실패: ${e.message}`); return; }
-    const stopNew = existsSync(STOP_F) || existsSync(FLAT_F);
-    if (o && o.status === 'FILLED') { o = await finalFill(P, buy.id, o); return onFilled(buy, o.filled, o.avgPx, feeOf(o)); }
-    if (o && (o.filled > 0 || now() >= lastEntry || stopNew)) { // 일부 체결이면 나머지는 취소하고 체결된 만큼만 관리
-      const f = await cancelAndSettle(P, buy.id);
-      if (!settled(f)) { log(`${buy.s} 매수 주문 취소가 아직 확정 안 됨 — 다음 확인 때 다시`); return; }
-      if (f.filled > 0) return onFilled(buy, f.filled, f.avgPx, feeOf(f));
-      log(`${buy.s} 매수 주문 취소됨 (${stopNew ? '정지 파일' : '14:30까지 안 닿음'}) — 체결 없음`); buy = null; persist(); return;
+  async function checkBuy(g, lp) {
+    const why = existsSync(FLAT_F) ? 'FLATTEN_GAP 파일' : blocked(); // 정지 파일·손실 한도면 안 닿은 매수 주문도 거둠
+    if (!LIVE) { if (lp <= g.level) await onFilled(g, g.qty, g.level); else if (now() >= lastEntry || why) { log(`${g.s} ${why || '14:30까지 지정가 안 닿음'} — 주문 취소`); g.st = 'done'; } return; }
+    let o = null; try { o = await P.getOrder(g.id); } catch (e) { log(`${g.s} 매수 주문 조회 실패: ${e.message}`); return; }
+    if (o && o.status === 'FILLED') { o = await finalFill(P, g.id, o); return onFilled(g, o.filled, o.avgPx, feeOf(o)); }
+    if (o && (o.filled > 0 || now() >= lastEntry || why)) { // 일부 체결이면 나머지는 취소하고 체결된 만큼만 관리
+      const f = await cancelAndSettle(P, g.id);
+      if (!settled(f)) { log(`${g.s} 매수 주문 취소가 아직 확정 안 됨 — 다음 확인 때 다시`); return; }
+      if (f.filled > 0) return onFilled(g, f.filled, f.avgPx, feeOf(f));
+      log(`${g.s} 매수 주문 취소됨 (${why || '14:30까지 안 닿음'}) — 체결 없음`); g.st = 'done'; persist(); return;
     }
-    if (o && TERMINAL.has(o.status)) { log(`${buy.s} 매수 주문이 ${o.status} 상태로 끝남 — 체결 없음`); buy = null; persist(); }
+    if (o && TERMINAL.has(o.status)) { log(`${g.s} 매수 주문이 ${o.status} 상태로 끝남 — 체결 없음`); g.st = 'done'; persist(); }
   }
-  async function placeNext(px) {
+  // --- 새 후보: 갭 큰 순서로 남은 자리(SLOTS - 오늘 낸 주문)만큼 골라 현금을 나눠 동시에 지정가 ---
+  async function placeNew(px) {
+    const fresh = cands.filter(c => !done.has(c.s)); if (!fresh.length) return;
     const why = blocked(); if (why) { if (why !== lastBlock) log(`새 주문 멈춤: ${why}`); lastBlock = why; return; }
-    for (const c of cands.filter(c => !done.has(c.s)).sort((a, b) => b.gap - a.gap)) {
+    const pick = [], full = [];
+    for (const c of fresh.sort((a, b) => b.gap - a.gap)) {
+      if (D.orders + pick.length >= SLOTS) { done.add(c.s); full.push(c.s); continue; }
       const lp = px.get(c.s); if (!(lp > 0)) continue;
       try { const ft = (await P.candles(c.s, '1m', 200)).find(b => b.t > sess.open && b.l < c.level); if (ft) c.touchedAt = Math.min(c.touchedAt ?? Infinity, ft.t - MIN); } catch { /* 분봉 실패 시 지금까지 본 값으로 */ }
-      // 백테스트는 지정가에 '처음' 닿을 때 삼. 다른 종목을 기다리는 사이 이미 닿았다면 그 거래는 벌써 시작(또는 끝)된 것 → 안 삼
+      // 백테스트는 지정가에 '처음' 닿을 때 삼. 이미 닿았다면 그 거래는 벌써 시작(또는 끝)된 것 → 안 삼
       // 방금(2분 30초 안) 닿았고 지금도 지정가 이하면 그 '처음 닿음'에 늦게 올라타는 것이라 삼 (바로 체결됨)
       if (c.touchedAt != null && !(now() - c.touchedAt <= 2.5 * MIN && lp <= c.level)) { done.add(c.s); log(`${c.s}: ${kst(c.touchedAt).slice(6, 11)}에 이미 지정가 $${fmtPx(c.level)}에 닿았음 (지금 $${r4(lp)}) — 백테스트 거래는 그때 시작돼서 지금은 안 삼`); continue; }
-      let notional = G.notional;
-      if (ALL_CASH) { let bp = NaN; try { bp = await P.buyingPower(); } catch (e) { log(`주문 가능 금액 조회 실패: ${e.message}`); } if (!(bp > 0)) return; notional = bp * 0.98; } // 수수료·가격 반올림 여유 2%
-      const qty = Math.floor(notional / c.level);
-      if (qty < 1) { done.add(c.s); continue; }
-      done.add(c.s); const b = { date: sess.date, s: c.s, pc: c.pc, o: c.o, gap: c.gap, level: c.level, qty, orderT: now(), id: null };
+      pick.push({ c, lp });
+    }
+    if (full.length) log(`오늘 주문 ${SLOTS}개를 다 써서 안 삼: ${full.join(', ')}`);
+    if (!pick.length) return;
+    let each = G.notional;
+    if (ALL_CASH) { let bp = NaN; try { bp = await P.buyingPower(); } catch (e) { log(`주문 가능 금액 조회 실패: ${e.message}`); } if (!(bp > 0)) return; each = bp * 0.98 / pick.length; } // 수수료·가격 반올림 여유 2%
+    for (const { c, lp } of pick) {
+      done.add(c.s);
+      const qty = Math.floor(each / c.level);
+      if (qty < 1) { log(`${c.s}: 나눈 돈 $${each.toFixed(2)}로 1주($${fmtPx(c.level)})도 못 사서 건너뜀`); continue; }
+      const g = { st: 'buy', date: sess.date, s: c.s, pc: c.pc, o: c.o, gap: c.gap, level: c.level, qty, orderT: now(), id: null };
       if (LIVE) {
-        try { const r = await P.placeOrder({ symbol: c.s, side: 'BUY', orderType: 'LIMIT', timeInForce: 'DAY', quantity: String(qty), price: fmtPx(c.level), clientOrderId: `gap${sess.date.replace(/-/g, '')}${c.s}B` }); b.id = r.orderId; }
+        try { g.id = (await P.placeOrder({ symbol: c.s, side: 'BUY', orderType: 'LIMIT', timeInForce: 'DAY', quantity: String(qty), price: fmtPx(c.level), clientOrderId: `gap${tag}${c.s}B` })).orderId; }
         catch (e) { log(`${c.s} 지정가 매수 주문 실패: ${e.message}`); persist(); continue; }
       }
-      buy = b; persist();
-      log(`${c.s} ${LIVE ? '실제 ' : ''}지정가 매수 주문 ${qty}주 $${fmtPx(c.level)} (시가 $${c.o} -5%, 갭 ${pct(c.gap)}, 현재가 $${r4(lp)})`);
-      return;
+      D.orders++; legs.push(g); persist();
+      log(`${c.s} ${LIVE ? '실제 ' : ''}지정가 매수 주문 ${qty}주 $${fmtPx(c.level)} (시가 $${c.o} -5%, 갭 ${pct(c.gap)}, 현재가 $${r4(lp)}${pick.length > 1 ? `, ${pick.length}종목에 $${each.toFixed(2)}씩` : ''})`);
     }
   }
-  if (pos) log(`이어서 관리: 보유 ${pos.s} ${pos.qty}주`); if (buy) log(`이어서 관리: 매수 주문 ${buy.s} $${fmtPx(buy.level)}`);
+  for (const g of active()) log(`이어서 관리: ${g.st === 'hold' ? `보유 ${g.s} ${g.qty}주` : `매수 주문 ${g.s} $${fmtPx(g.level)}`}`);
   while (now() < sess.close + 5 * MIN) {
     if (now() < lastEntry && scans < 4 && now() >= nextScan) { // 9:30:20, 9:31, 9:33, 9:36 쯤 후보 찾기 (첫 분봉이 늦게 올라오는 종목 대비)
       for (const c of await findCandidates(P, sess, seen)) if (!cands.some(x => x.s === c.s)) cands.push(c);
       scans++; nextScan = now() + ([40_000, 2 * MIN, 3 * MIN][scans - 1] ?? 0);
       if (CHECK) return;
     }
-    const syms = [...new Set([...(pos ? [pos.s] : []), ...(buy ? [buy.s] : []), ...cands.filter(c => !done.has(c.s)).map(c => c.s)])];
+    const syms = [...new Set([...active().map(g => g.s), ...cands.filter(c => !done.has(c.s)).map(c => c.s)])];
     let px = new Map();
     if (syms.length) { try { px = await P.prices(syms); } catch (e) { log(`현재가 조회 실패: ${e.message}`); await sleep(G.pollMs); continue; } }
     for (const c of cands) { const v = px.get(c.s); if (v > 0 && v < c.level && c.touchedAt == null) c.touchedAt = now(); }
-    if (pos) await manage(px.get(pos.s));
-    else if (buy) await checkBuy(px.get(buy.s));
-    if (!pos && !buy && now() < lastEntry && now() < flatAt) await placeNext(px);
-    if (!pos && !buy && (now() >= lastEntry || (scans >= 4 && cands.every(c => done.has(c.s))))) break;
-    if (now() - lastStatus > 30 * MIN) { lastStatus = now(); log(`보유 ${pos ? `${pos.s} ${pos.qty}주` : '-'} / 매수 주문 ${buy ? `${buy.s} $${fmtPx(buy.level)}` : '-'} / 후보 ${cands.length}개${LIVE ? ` / 오늘 $${D.pnl.toFixed(2)} 누적 $${S.cum.toFixed(2)}` : ''}`); }
+    for (const g of active()) { if (g.st === 'hold') await manage(g, px.get(g.s)); else await checkBuy(g, px.get(g.s)); }
+    if (now() < lastEntry && now() < flatAt) await placeNew(px);
+    if (!active().length && (now() >= lastEntry || (scans >= 4 && cands.every(c => done.has(c.s))))) break;
+    if (now() - lastStatus > 30 * MIN) {
+      lastStatus = now(); const a = active();
+      log(`보유 ${a.filter(g => g.st === 'hold').map(g => `${g.s} ${g.qty}주`).join(', ') || '-'} / 매수 주문 ${a.filter(g => g.st === 'buy').map(g => `${g.s} $${fmtPx(g.level)}`).join(', ') || '-'} / 후보 ${cands.length}개${LIVE ? ` / 오늘 $${D.pnl.toFixed(2)} 누적 $${S.cum.toFixed(2)}` : ''}`);
+    }
     await sleep(G.pollMs);
   }
-  if (pos) log(`⚠ 장이 끝났는데 못 판 수량이 있어요: ${pos.s} ${pos.qty}주 — 토스 앱에서 직접 팔아 주세요`);
+  for (const g of active()) if (g.st === 'hold') log(`⚠ 장이 끝났는데 못 판 수량이 있어요: ${g.s} ${g.qty}주 — 토스 앱에서 직접 팔아 주세요`);
   persist();
-  log(`=== ${sess.date} 끝: 후보 ${cands.length}개, 진입 ${D.entries}건${LIVE ? `, 오늘 $${D.pnl.toFixed(2)}, 누적 $${S.cum.toFixed(2)}` : ''} → ${DATA.split(/[\\/]/).slice(-2).join('/')}/trades.csv`);
+  log(`=== ${sess.date} 끝: 후보 ${cands.length}개, 주문 ${D.orders}건, 진입 ${D.entries}건${LIVE ? `, 오늘 $${D.pnl.toFixed(2)}, 누적 $${S.cum.toFixed(2)}` : ''} → ${DATA.split(/[\\/]/).slice(-2).join('/')}/trades.csv`);
 }
 
 // 같은 봇이 두 번 켜지지 않게 (2026-11-23 예전 봇·새 봇이 같이 돌았던 일). 기록 폴더마다 running.pid
@@ -419,7 +441,7 @@ async function main() {
   const P = MOCK ? mockProvider() : liveProvider();
   if (HOLD) return holdMain(P);
   if (AH) return ahMain(P);
-  log(LIVE ? `시작 — ⚠ 실전: 토스에 실제 주문. 거래당 ${ALL_CASH ? '주문 가능 달러 현금 전부(×0.98)' : '$' + L.perTradeUsd}, 하루 최대 ${L.maxEntriesPerDay}회, 하루 손실 한도 $${L.dailyLossLimitUsd}, 누적 손실 한도 $${L.totalLossLimitUsd}`
+  log(LIVE ? `시작 — ⚠ 실전: 토스에 실제 주문. 갭 큰 ${SLOTS}종목까지 ${ALL_CASH ? '주문 가능 달러 현금(×0.98)을 나눠' : `$${L.perTradeUsd}씩`} 동시에, 하루 최대 ${L.maxEntriesPerDay}회, 손실 한도(애프터장과 합계) 하루 $${L.dailyLossLimitUsd}·누적 $${L.totalLossLimitUsd}`
            : `시작 ${MOCK ? '(가상 시장)' : ''}${CHECK ? '(후보 찾기만)' : ''} — 주문 없이 가상 매매만. 거래당 $${G.notional}`);
   log(`규칙: 갭 +${G.gapMin * 100}%↑·시가 $${G.pxMin}~${G.pxMax} → 시가 -${G.dip * 100}% 지정가 매수 → 목표 +${G.tp * 100}% / 손절 -${G.sl * 100}% / 15:58 정리. 멈추기: orb\\STOP_GAP, 다 팔기: orb\\FLATTEN_GAP`);
   if (LIVE) log(`계좌 accountSeq ${await P.accountSeq()}`);
@@ -435,11 +457,12 @@ async function main() {
 }
 // ---------- 보유 주식 관리 (--hold): 봇이 사지 않은 미국 주식(원래 갖고 있던 것·앱에서 직접 산 것)도
 // 평균 매입가 대비 +10% 이상이면 팔고 -20% 이하면 팖. 장 마감 정리는 안 함. 2026-11-24 사용자: "이미 매수한 것도 인식하도록" → "손절·목표 적용"
+// 2026-11-26: 전부 관리(hold_skip.txt로 빼기) → orb/hold_only.txt에 적은 종목만. +10%/-20%는 갭 눌림 진입용으로 검증한 숫자라 아무 종목에나 맞는 게 아님
+//   (그때까지 15건 매도, 평균 매입가 대비 -$22.94 — 대부분 이미 -20~-93% 빠져 있던 종목)
 // 실행: node orb/gap_dip.mjs --hold [--once] (연습: 주문 없이 기록만) / --hold --live (실제 매도). 멈추기: orb\STOP_HOLD. 기록: orb/data-hold[-live]/
 const STOP_HOLD_F = join(HERE, 'STOP_HOLD');
-const HOLD_SKIP_F = join(HERE, 'hold_skip.txt'); // 건너뛸 종목 (한 줄에 하나, # 뒤는 메모). 매번 다시 읽어서 고치면 바로 반영
-const holdSkip = () => { try { return new Set(readFileSync(HOLD_SKIP_F, 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim().toUpperCase()).filter(Boolean)); } catch { return new Set(); } };
-const GAP_STATE_F = join(HERE, (MOCK ? 'data-gap-mock' : 'data-gap') + (LIVE ? '-live' : ''), 'state.json');
+const HOLD_ONLY_F = process.env.GAP_HOLD_ONLY || join(HERE, 'hold_only.txt'); // 관리할 종목 (한 줄에 하나, # 뒤는 메모). 매번 다시 읽어서 고치면 바로 반영
+const holdOnly = () => { try { return new Set(readFileSync(HOLD_ONLY_F, 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim().toUpperCase()).filter(Boolean)); } catch { return new Set(); } };
 const sv = v => (typeof v === 'string' ? v : String(v?.code ?? v?.value ?? v?.name ?? ''));
 const HOLD_HEADER = ['날짜(ET)', '시각(KST)', '종목', '사유', '보유수량', '평균매입가', '판단가', '판단수익률', '매도수량', '매도평균가', '손익USD(평균매입가 대비)', '모드', '주문ID'];
 function holdCsv(row) { const f = join(DATA, 'trades.csv'); if (!existsSync(f)) appendFileSync(f, '﻿' + HOLD_HEADER.join(',') + '\n'); appendFileSync(f, row.map(v => (typeof v === 'string' && /[",]/.test(v) ? `"${v}"` : v)).join(',') + '\n'); }
@@ -449,12 +472,13 @@ async function holdScan(P, sess, done, noted) {
   let h; try { h = await P.holdings(); } catch (e) { log(`보유 주식 조회 실패: ${e.message}`); return; }
   const items = Array.isArray(h) ? h : h?.items;
   if (!Array.isArray(items)) { log(`보유 주식 응답 모양이 예상과 달라요 — 매도 안 함: ${JSON.stringify(h).slice(0, 200)}`); return; }
-  let gs = {}; try { gs = JSON.parse(readFileSync(GAP_STATE_F, 'utf8') || '{}'); } catch { /* 갭 봇 기록 없음 */ }
-  const gapSyms = new Set(gs.days?.[sess.date]?.done ?? []); if (gs.pos?.s) gapSyms.add(gs.pos.s); if (gs.buy?.s) gapSyms.add(gs.buy.s);
+  const gs = readState(stateOf('gap'));
+  const gapSyms = new Set([...(gs.days?.[sess.date]?.done ?? []), ...(gs.legDate === sess.date ? (gs.legs ?? []).map(g => g.s) : [])]);
   const us = items.filter(x => sv(x.marketCountry) === 'US' && num(x.quantity) > 0 && num(x.averagePurchasePrice) > 0 && !done.has(x.symbol));
-  const skip = holdSkip();
-  const todo = us.filter(x => { const why = gapSyms.has(x.symbol) ? '갭 봇이 오늘 거래한 종목' : skip.has(String(x.symbol).toUpperCase()) ? 'hold_skip.txt에 적힌 종목' : null; if (!why) return true; if (!noted.has(x.symbol)) log(`${x.symbol}: ${why}이라 안 건드림`); noted.add(x.symbol); return false; });
-  if (!noted.has('#first')) { noted.add('#first'); log(`보유 미국 주식 ${us.length}종목 확인 (관리 대상 ${todo.length}종목)`); }
+  const only = holdOnly();
+  const todo = us.filter(x => { if (!only.has(String(x.symbol).toUpperCase())) return false; if (!gapSyms.has(x.symbol)) return true; if (!noted.has(x.symbol)) log(`${x.symbol}: 갭 봇이 오늘 거래한 종목이라 안 건드림`); noted.add(x.symbol); return false; });
+  const key = '#list ' + todo.map(x => x.symbol).join(','); // 목록이 바뀌면 다시 알림
+  if (!noted.has(key)) { noted.add(key); log(`보유 미국 주식 ${us.length}종목 중 hold_only.txt에 적힌 ${todo.length}종목 관리${todo.length ? ': ' + todo.map(x => x.symbol).join(', ') : only.size ? '' : ' (목록이 비어 있어서 아무것도 안 팖)'}`); }
   if (!todo.length) return;
   let px = new Map(); try { px = await P.prices(todo.map(x => x.symbol)); } catch (e) { log(`현재가 조회 실패 — 보유 주식 화면 가격으로 판단: ${e.message}`); }
   for (const x of todo) {
@@ -473,7 +497,7 @@ async function holdScan(P, sess, done, noted) {
   }
 }
 async function holdMain(P) {
-  log(`시작 — 보유 주식 관리 ${LIVE ? '⚠ 실전: 토스에 실제 매도 주문' : '(연습: 주문 없이 기록만)'}. 봇이 사지 않은 미국 주식을 평균 매입가 대비 +${G.tp * 100}% 이상이면 팔고 -${G.sl * 100}% 이하면 팜(1분마다, 정규장만, 종목당 하루 한 번). 한국 주식·갭 봇이 오늘 거래한 종목은 안 건드림. 멈추기: orb\\STOP_HOLD`);
+  log(`시작 — 보유 주식 관리 ${LIVE ? '⚠ 실전: 토스에 실제 매도 주문' : '(연습: 주문 없이 기록만)'}. orb\\hold_only.txt에 적은 미국 주식만 평균 매입가 대비 +${G.tp * 100}% 이상이면 팔고 -${G.sl * 100}% 이하면 팜(1분마다, 정규장만, 종목당 하루 한 번). 갭 봇이 오늘 거래한 종목은 안 건드림. 멈추기: orb\\STOP_HOLD`);
   if (LIVE) log(`계좌 accountSeq ${await P.accountSeq()}`);
   for (;;) {
     const sess = await P.session(now());
@@ -520,7 +544,8 @@ async function ahCandidates(P, sess) {
 async function ahDay(P, sess) {
   const S = LIVE ? loadState() : {}; S.cum ??= 0; S.days ??= {}; const D = (S.days[sess.date] ??= { entries: 0, pnl: 0 });
   const persist = () => { if (LIVE) saveState(S); }, dateTag = sess.date.replace(/-/g, '');
-  const blocked = () => existsSync(STOP_AH_F) ? 'STOP_AH 파일' : !LIVE ? null : D.pnl <= -L.dailyLossLimitUsd ? `하루 손실 한도 $${L.dailyLossLimitUsd}` : S.cum <= -L.totalLossLimitUsd ? `누적 손실 한도 $${L.totalLossLimitUsd}` : null;
+  const blocked = () => { if (existsSync(STOP_AH_F)) return 'STOP_AH 파일'; if (!LIVE) return null; const b = lossBoth(S, sess.date);
+    return b.day <= -L.dailyLossLimitUsd ? `하루 손실 한도 $${L.dailyLossLimitUsd} (갭·애프터장 합계 $${b.day.toFixed(2)})` : b.cum <= -L.totalLossLimitUsd ? `누적 손실 한도 $${L.totalLossLimitUsd} (갭·애프터장 합계 $${b.cum.toFixed(2)})` : null; };
   const lastEntry = sess.close + AHG.lastEntryMin * MIN, exitAt = sess.close + AHG.exitMin * MIN;
   if (D.entries > 0) return log(`${sess.date} 애프터장은 이미 주문함 — 다시 켠 경우 남은 주문·보유는 토스 앱에서 확인해 주세요`);
   const why = blocked(); if (why) return log(`새 주문 멈춤: ${why}`);
@@ -589,14 +614,14 @@ async function ahDay(P, sess) {
       }
       if (g.st === 'hold') await manage(g, lp, t >= exitAt);
     }
-    if (t >= exitAt + 8 * MIN) { for (const g of legs) if (g.st === 'hold') log(`⚠ ${g.s} ${g.qty}주를 19:58까지 못 팔았어요 — 토스 앱에서 확인해 주세요(다음 날엔 보유 주식 관리 규칙을 받음)`); break; }
+    if (t >= exitAt + 8 * MIN) { for (const g of legs) if (g.st === 'hold') log(`⚠ ${g.s} ${g.qty}주를 19:58까지 못 팔았어요 — 토스 앱에서 확인해 주세요(orb\\hold_only.txt에 적으면 다음 날 보유 주식 관리가 +10%/-20%에 팜)`); break; }
     await sleep(MOCK ? 60_000 : 3000);
   }
   log(`=== ${sess.date} 애프터장 끝: 주문 ${legs.length}건${LIVE ? `, 오늘 $${D.pnl.toFixed(2)}, 누적 $${S.cum.toFixed(2)}` : ''}`);
 }
 async function ahMain(P) {
   log(`시작 — 애프터장 ${LIVE ? '⚠ 실전: 토스에 실제 주문' : '(연습: 주문 없이 현재가로 가상 체결)'}. 정규장 종가 +${AHG.gainMin * 100}%↑·$${AHG.pxMin}~${AHG.pxMax}(ETF·ETN 제외) 최대 ${AHG.maxCands}종목 → 종가 -${AHG.dip * 100}%에 지정가 매수(19:00까지) → 목표 +${AHG.tp * 100}% / 손절 -${AHG.sl * 100}% / 19:50 정리. 돈은 주문 가능 달러 현금을 나눠 씀. 멈추기: orb\\STOP_AH`);
-  if (LIVE) log(`계좌 accountSeq ${await P.accountSeq()}${L ? ` — 한도: 하루 손실 $${L.dailyLossLimitUsd}, 누적 $${L.totalLossLimitUsd} (애프터장 따로 셈)` : ''}`);
+  if (LIVE) log(`계좌 accountSeq ${await P.accountSeq()}${L ? ` — 한도: 하루 손실 $${L.dailyLossLimitUsd}, 누적 $${L.totalLossLimitUsd} (갭 봇과 합계)` : ''}`);
   for (;;) {
     const sess = await P.session(now());
     if (sess.closed) { if (MOCK || ONCE) return log(`${sess.date} 휴장`); log(`${sess.date} 휴장 — 1시간 뒤 다시 확인`); await sleep(HOUR); continue; }
