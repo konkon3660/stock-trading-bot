@@ -272,6 +272,7 @@ async function runDay(P, sess) {
   for (const [s, st] of stats) {
     let all = [], orb = [];
     for (let k = 0; k < 4; k++) { // 막 끝난 9:34 봉이 아직 안 올라왔을 수 있어서, 장 시작 직후에만 몇 번 다시 받음
+      // ⚠ 2026-11-26: 토스 분봉 t는 봉 '끝' 시각이라 이 범위는 9:29 프리장 봉을 넣고 9:34 봉을 빼요 (gap_dip.mjs는 고침). 다시 켜기 전에 t > open && t <= orEnd로 고칠 것
       try { all = await barsSince(P, s, sess.open); orb = all.filter(b => b.t >= sess.open && b.t < orEnd); } catch { orb = []; }
       if (orb.some(b => b.t === orEnd - MIN) || MOCK || now() > orEnd + 2 * MIN) break; await sleep(3000);
     }

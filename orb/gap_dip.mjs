@@ -174,7 +174,8 @@ function mockProvider() {
     async candles(s, interval, count) {
       const m = M.get(s);
       if (interval === '1d') { const out = []; for (let i = 5; i >= 1; i--) out.push({ t: open - i * 24 * HOUR - 9.5 * HOUR, o: m.pc, h: m.pc, l: m.pc, c: m.pc, v: 1e6 }); out.push({ t: open - 9.5 * HOUR, o: m.o, h: m.o, l: m.o, c: at(s, now()), v: 1 }); return out; }
-      const out = []; for (let t = open; t + MIN <= now(); t += MIN) { const r = range(s, t, t + MIN - 1); out.push({ t, o: at(s, t), h: r.hi, l: r.lo, c: at(s, t + MIN - 1), v: 1000 }); } return out.slice(-count);
+      // 토스처럼: t = 봉 끝 시각, 진행 중인 봉 포함, 프리장 봉도 섞여 옴 (프리장 가격은 시가×0.98 → 시가를 프리장 봉에서 읽으면 갭이 틀리게 찍힘)
+      const out = []; for (let t = open - 30 * MIN; t < now(); t += MIN) { const e = Math.min(t + MIN - 1, now()), r = range(s, t, e); out.push({ t: t + MIN, o: at(s, t), h: r.hi, l: r.lo, c: at(s, e), v: 1000 }); } return out.slice(-count);
     },
     async orderbook(s) { return book(s); },
     async stockTypes(symbols) { return new Map(symbols.map(s => [s, s === 'LEV3' ? { type: 'ETF', lev: 3 } : { type: 'STOCK', lev: null }])); },
@@ -260,8 +261,10 @@ async function findCandidates(P, sess, seen) {
     const t = types.get(x.symbol);
     if (riskyType(t) || (LIVE && !t)) { risky++; seen.add(x.symbol); continue; }
     let bars = [], daily = [];
-    try { bars = (await P.candles(x.symbol, '1m', 200)).filter(b => b.t >= sess.open); } catch { continue; }
-    const b0 = bars.find(b => b.t === sess.open); if (!b0) continue; // 9:30 첫 분봉이 아직 없으면 다음에 다시
+    // 토스 분봉 t는 봉이 '끝나는' 시각 (2026-11-26 확인: 녹화 5초 현재가와 60초 어긋남, Massive 분봉 T = 토스 T+60).
+    // 그래서 9:30~9:31 첫 정규장 봉은 t = 9:31. t = 9:30인 봉은 9:29 프리장 봉이라 시가로 쓰면 안 됨 (예전 버그)
+    try { bars = (await P.candles(x.symbol, '1m', 200)).filter(b => b.t > sess.open); } catch { continue; }
+    const b0 = bars.find(b => b.t === sess.open + MIN); if (!b0) continue; // 9:30 첫 분봉이 아직 없으면 다음에 다시
     const o = b0.o; if (!(o >= G.pxMin * 0.9 && o < G.pxMax * 1.1)) { seen.add(x.symbol); continue; }
     try { daily = await P.candles(x.symbol, '1d', 5); } catch { continue; }
     const pcx = prevClose(daily, sess, o), pc = pcx.c; if (!(pc > 0)) continue;
@@ -269,7 +272,7 @@ async function findCandidates(P, sess, seen) {
     const gap = o / pc - 1;
     if (!(gap >= G.gapMin && o >= G.pxMin && o < G.pxMax)) continue;
     const level = downTick(o * (1 - G.dip)), ft = bars.find(b => b.l < level);
-    out.push({ s: x.symbol, pc, pcT: pcx.t, o, gap, level, touchedAt: ft ? ft.t : null });   // 지정가에 처음 닿은 시각 (분봉 시작 시각)
+    out.push({ s: x.symbol, pc, pcT: pcx.t, o, gap, level, touchedAt: ft ? ft.t - MIN : null });   // 지정가에 처음 닿은 시각 (분봉 시작 시각)
   }
   log(`후보 찾기: 순위 종목 ${fresh.length}개 확인 (레버리지·인버스 ETF/ETN·종류 모름 ${risky}개 제외) → 갭 +${G.gapMin * 100}%↑·시가 $${G.pxMin}~${G.pxMax} ${out.length}개${out.length ? ': ' + out.map(c => `${c.s}(갭 ${pct(c.gap)}, 전일종가 $${c.pc}[일봉 ${kst(c.pcT)}], 시가 $${c.o}, 지정가 $${fmtPx(c.level)})`).join(', ') : ''}`);
   return out;
@@ -361,7 +364,7 @@ async function runDay(P, sess) {
     const why = blocked(); if (why) { if (why !== lastBlock) log(`새 주문 멈춤: ${why}`); lastBlock = why; return; }
     for (const c of cands.filter(c => !done.has(c.s)).sort((a, b) => b.gap - a.gap)) {
       const lp = px.get(c.s); if (!(lp > 0)) continue;
-      try { const ft = (await P.candles(c.s, '1m', 200)).find(b => b.t >= sess.open && b.l < c.level); if (ft) c.touchedAt = Math.min(c.touchedAt ?? Infinity, ft.t); } catch { /* 분봉 실패 시 지금까지 본 값으로 */ }
+      try { const ft = (await P.candles(c.s, '1m', 200)).find(b => b.t > sess.open && b.l < c.level); if (ft) c.touchedAt = Math.min(c.touchedAt ?? Infinity, ft.t - MIN); } catch { /* 분봉 실패 시 지금까지 본 값으로 */ }
       // 백테스트는 지정가에 '처음' 닿을 때 삼. 다른 종목을 기다리는 사이 이미 닿았다면 그 거래는 벌써 시작(또는 끝)된 것 → 안 삼
       // 방금(2분 30초 안) 닿았고 지금도 지정가 이하면 그 '처음 닿음'에 늦게 올라타는 것이라 삼 (바로 체결됨)
       if (c.touchedAt != null && !(now() - c.touchedAt <= 2.5 * MIN && lp <= c.level)) { done.add(c.s); log(`${c.s}: ${kst(c.touchedAt).slice(6, 11)}에 이미 지정가 $${fmtPx(c.level)}에 닿았음 (지금 $${r4(lp)}) — 백테스트 거래는 그때 시작돼서 지금은 안 삼`); continue; }
@@ -504,7 +507,7 @@ async function ahCandidates(P, sess) {
     const t = types.get(x.symbol);
     if (riskyType(t) || t?.type === 'ETF' || (LIVE && !t)) { risky++; continue; } // 백테스트는 ETF·ETN 전부 제외
     let bars = [], daily = [];
-    try { bars = (await P.candles(x.symbol, '1m', 40)).filter(b => b.t >= sess.close - 30 * MIN && b.t < sess.close); daily = await P.candles(x.symbol, '1d', 5); } catch { nodata++; continue; }
+    try { bars = (await P.candles(x.symbol, '1m', 40)).filter(b => b.t > sess.close - 30 * MIN && b.t <= sess.close); daily = await P.candles(x.symbol, '1d', 5); } catch { nodata++; continue; } // 분봉 t = 끝 시각 → 마지막 봉(t = 16:00)의 종가가 정규장 종가
     const last = bars[bars.length - 1], pc = prevClose(daily, sess, NaN).c;
     if (!last || !(pc > 0)) { nodata++; continue; }
     const close = last.c, gain = close / pc - 1;
