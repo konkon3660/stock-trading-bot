@@ -1,0 +1,231 @@
+{
+  "envFile": "../toss-mcp/.env",
+  "seedUsd": 150,
+  "positionPct": 0.2,
+  "maxPositions": 3,
+  "maxTradesPerDay": 15,
+  "dailyLossLimitPct": 0.05,
+  "pollSec": 5,
+  "rankRefreshSec": 60,
+  "candleRefreshSec": 30,
+  "fxFallback": 1340,
+  "watchMyStocks": true,
+  "record": true,
+  "sessions": {
+    "record": [
+      "day",
+      "pre",
+      "after"
+    ],
+    "bookSampleSec": 60,
+    "bookSamplePerLoop": 2,
+    "extendedUniverse": {
+      "minTradingAmountUsd": 50000
+    },
+    "extendedEntry": {
+      "noEntryFirstMin": 15,
+      "noEntryLastMin": 15
+    }
+  },
+  "universe": {
+    "minPrice": 0.3,
+    "maxPrice": 20,
+    "minChangeRate": 0.15,
+    "maxChangeRate": 3.0,
+    "minTradingAmountUsd": 300000,
+    "topN": 25,
+    "excludeInvestmentCaution": false
+  },
+  "strategies": [
+    {
+      "id": "A",
+      "name": "돌파 기본",
+      "signal": "breakout",
+      "filters": {},
+      "enabled": false
+    },
+    {
+      "id": "B",
+      "name": "돌파+필터",
+      "signal": "breakout",
+      "filters": {
+        "aboveVwap": true,
+        "maxVwapExtPct": 0.15,
+        "maxUpperWick": 0.4,
+        "higherLows": true,
+        "minBidAskRatio": 1.0,
+        "maxSharesOutstanding": 50000000,
+        "minRvol": 3
+      },
+      "exit": {
+        "vwapExit": true
+      },
+      "enabled": false
+    },
+    {
+      "id": "C",
+      "name": "눌림목",
+      "signal": "pullback",
+      "filters": {
+        "maxUpperWick": 0.5,
+        "minBidAskRatio": 1.0,
+        "maxSharesOutstanding": 50000000,
+        "minRvol": 3
+      },
+      "exit": {
+        "vwapExit": true,
+        "useStructureStop": true
+      },
+      "enabled": false
+    },
+    {
+      "id": "D",
+      "name": "봉마감 돌파",
+      "signal": "breakoutClose",
+      "filters": {},
+      "enabled": false
+    },
+    {
+      "id": "E",
+      "name": "급락 반등",
+      "signal": "dipRebound",
+      "filters": {
+        "minBidAskRatio": 1.0
+      },
+      "exit": {
+        "useStructureStop": true
+      },
+      "enabled": false
+    },
+    {
+      "id": "F",
+      "name": "VWAP 아래 눌림(데이터 발굴)",
+      "signal": "vwapDip",
+      "filters": {},
+      "exit": {
+        "stopLossPct": 0.05,
+        "takeProfitPct": 0.12,
+        "maxHoldMinutes": 60,
+        "timeStopMin": 9999,
+        "trailStartPct": 9,
+        "breakevenAtPct": 0,
+        "partialTakePct": 0
+      },
+      "enabled": false
+    },
+    {
+      "id": "G",
+      "name": "VWAP 아래 눌림 + 지정가",
+      "signal": "vwapDip",
+      "filters": {},
+      "exit": {
+        "stopLossPct": 0.05,
+        "takeProfitPct": 0.12,
+        "maxHoldMinutes": 60,
+        "timeStopMin": 9999,
+        "trailStartPct": 9,
+        "breakevenAtPct": 0,
+        "partialTakePct": 0
+      },
+      "order": "limit",
+      "vwapDip": {
+        "maxDrop5mPct": 0.08
+      },
+      "enabled": false
+    },
+    {
+      "id": "H",
+      "name": "G를 프리·애프터에서도",
+      "signal": "vwapDip",
+      "filters": {},
+      "exit": {
+        "stopLossPct": 0.05,
+        "takeProfitPct": 0.12,
+        "maxHoldMinutes": 60,
+        "timeStopMin": 9999,
+        "trailStartPct": 9,
+        "breakevenAtPct": 0,
+        "partialTakePct": 0
+      },
+      "order": "limit",
+      "sessions": [
+        "pre",
+        "regular",
+        "after"
+      ],
+      "vwapDip": {
+        "maxDrop5mPct": 0.08
+      },
+      "enabled": false
+    }
+  ],
+  "entry": {
+    "breakoutLookbackMin": 5,
+    "volumeAvgMin": 20,
+    "volumeSurgeMultiple": 3,
+    "breakoutBufferPct": 0.002,
+    "maxSpreadPct": 0.015,
+    "maxEntrySlipPct": 0.02,
+    "noEntryFirstMin": 15,
+    "noEntryLastMin": 30,
+    "allowPremarket": false,
+    "cooldownMin": 30,
+    "noReentryAfterStop": true
+  },
+  "pullback": {
+    "lookbackMin": 60,
+    "minPullbackBars": 3,
+    "surgeMultiple": 3,
+    "minDepthPct": 0.04,
+    "maxDepthPct": 0.2,
+    "dryUpRatio": 0.6,
+    "vwapTolerancePct": 0.03,
+    "reentryVolMultiple": 1.2
+  },
+  "exit": {
+    "stopLossPct": 0.07,
+    "minStopPct": 0.02,
+    "trailStartPct": 0.05,
+    "trailPct": 0.05,
+    "timeStopMin": 20,
+    "timeStopMinGainPct": 0.03,
+    "flattenBeforeCloseMin": 15,
+    "eodHaircutPct": 0.05,
+    "vwapExit": false,
+    "useStructureStop": false,
+    "breakevenAtPct": 0.03,
+    "breakevenOffsetPct": 0.002,
+    "partialTakePct": 0.05,
+    "partialTakeFrac": 0.5
+  },
+  "fills": {
+    "depthShare": 0.5,
+    "fillDelayMs": 1000,
+    "commissionPct": 0.001,
+    "minFeeUsd": 0.01,
+    "sellTaxMinUsd": 0.01,
+    "minOrderUsd": 5
+  },
+  "limitOrder": {
+    "waitSec": 180
+  },
+  "mock": {
+    "seed": 7,
+    "date": "2026-11-16"
+  },
+  "dipRebound": {
+    "lookbackMin": 45,
+    "minDropPct": 0.12,
+    "maxDropPct": 0.5,
+    "maxBarsSinceLow": 10,
+    "capitulationMultiple": 2.5,
+    "minBouncePct": 0.03,
+    "maxBouncePct": 0.12
+  },
+  "vwapDip": {
+    "minGainPct": 0.15,
+    "minBelowVwapPct": 0.02,
+    "minDrop5mPct": 0.004,
+    "minDollarVol5m": 10000
+  }
+}

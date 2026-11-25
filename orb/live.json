@@ -1,0 +1,9 @@
+{
+  "perTradeUsd": "all",
+  "maxEntriesPerDay": 5,
+  "maxOpenPositions": 1,
+  "dailyLossLimitUsd": 3,
+  "totalLossLimitUsd": 10,
+  "buyLimitPadPct": 0.003,
+  "sellLimitPadPct": 0.005
+}

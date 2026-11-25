@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:">
+<title>토스 봇</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark" aria-hidden="true"></span><h1>토스 봇</h1></div>
+  <div class="now" id="now" aria-live="polite"></div>
+  <div class="cash" id="cash"></div>
+</header>
+
+<section class="strip" id="strip" aria-label="오늘 미국장 일정과 봇이 일하는 시간"></section>
+
+<section class="cards" id="bots" aria-label="봇"></section>
+
+<main class="lower">
+  <section class="panel holdings" aria-label="보유 주식">
+    <div class="panel-head"><h2>보유 주식</h2><span class="meta" id="acct-meta"></span><button class="btn" data-act="refresh-account" id="acct-refresh">새로고침</button></div>
+    <div class="panel-body" id="account"></div>
+  </section>
+  <section class="panel feed" aria-label="거래와 봇 기록">
+    <div class="tabs" role="tablist" id="log-tabs"></div>
+    <div class="log-err" id="log-err" hidden></div>
+    <div class="panel-body" id="log-body"></div>
+  </section>
+</main>
+
+<footer class="foot">
+  <label class="toggle"><input type="checkbox" id="set-login"><span>PC 켤 때 자동으로 켜기</span></label>
+  <label class="toggle"><input type="checkbox" id="set-notify"><span>체결·청산·오류 알림</span></label>
+  <button class="btn" data-act="shortcuts">바로가기 다시 만들기</button>
+  <button class="btn" data-act="open" data-what="project">프로젝트 폴더</button>
+  <span class="grow"></span>
+  <label class="toggle danger" title="갭 봇·애프터장 봇이 산 주식을 바로 팔고, 끌 때까지 새로 사지 않아요"><input type="checkbox" id="flag-flatten"><span>봇이 산 주식 지금 다 팔기</span></label>
+  <button class="btn" data-act="quit">토스 봇 종료</button>
+</footer>
+<div class="toast" id="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

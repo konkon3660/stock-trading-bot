@@ -1,0 +1,28 @@
+# 비밀
+history/.env
+orb/.toss-token.json
+*.env
+
+# 큰 데이터·실행 기록 (봇이 계속 바꿈)
+data/
+data-mock/
+data-replay/
+history/data/
+history/results/
+orb/data*/
+app/runtime/*
+!app/runtime/resources/
+app/runtime/resources/*
+!app/runtime/resources/app/
+backup/
+
+# 정지 스위치 (앱·사용자가 켰다 껐다 함)
+orb/STOP
+orb/STOP_*
+orb/FLATTEN*
+
+# 예전 수동 백업 (이제 git으로)
+*.bak-*
+*.bak
+__pycache__/
+*.tmp

@@ -1,0 +1,8 @@
+{
+  "name": "toss-bot",
+  "productName": "TossBot",
+  "version": "1.0.0",
+  "description": "토스 자동매매 봇 상태 화면 (트레이 상주)",
+  "main": "boot.cjs",
+  "private": true
+}
