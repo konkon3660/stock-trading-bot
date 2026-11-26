@@ -34,7 +34,38 @@ function trade(key, mode, r) {
     qty: num(pick(r, '매도수량', '수량')),
     pnl: num(pick(r, '손익USD')),
     ret: pick(r, '수수료후수익률', '수익률', '판단수익률'),
+    // 차트에 산 곳·판 곳·목표·손절 표시용 (보유 관리 기록엔 산 곳이 없음)
+    buyTime: pick(r, '체결(KST)'), buyPx: num(pick(r, '체결가')), sellPx: num(pick(r, '청산가', '매도평균가')),
+    level: num(pick(r, '지정가')), target: num(pick(r, '목표가')), stop: num(pick(r, '손절가')),
   };
+}
+
+// 갭 봇 후보 보드: 가장 최근 밤에 찾은 후보와 각 후보가 어떻게 됐는지 (events.log 끝부분을 읽음)
+function gapBoard(dir) {
+  const yr = new Date().getFullYear(), soon = Date.now() + 86_400_000;
+  const tOf = s => { const ms = Date.parse(`${yr}-${s.slice(0, 5)}T${s.slice(6)}+09:00`); return ms > soon ? Date.parse(`${yr - 1}-${s.slice(0, 5)}T${s.slice(6)}+09:00`) : ms; };
+  const rows = tail(path.join(dir, 'events.log'), 800, 160 * 1024).map(l => { const m = /^\[(\d\d-\d\d \d\d:\d\d:\d\d)\] (.*)$/.exec(l); return m && { t: tOf(m[1]), msg: m[2] }; }).filter(Boolean);
+  let i = rows.length - 1; while (i >= 0 && !/^후보 찾기: .* \d+개: /.test(rows[i].msg)) i--;
+  if (i < 0) return null;
+  const night = rows.filter(r => r.t > rows[i].t - 2 * 3_600_000 && r.t < rows[i].t + 12 * 3_600_000);
+  const list = new Map(); let first = Infinity;
+  for (const r of night) if (/^후보 찾기:/.test(r.msg)) for (const m of r.msg.matchAll(/([A-Z0-9.]+)\(갭 ([\d.]+)%, 전일종가 \$([\d.]+)\[[^\]]*\], 시가 \$([\d.]+), 지정가 \$([\d.]+)/g)) {
+    first = Math.min(first, r.t);
+    if (!list.has(m[1])) list.set(m[1], { s: m[1], gap: Number(m[2]) / 100, pc: Number(m[3]), o: Number(m[4]), level: Number(m[5]), status: 'seen' });
+  }
+  const set = (s, st) => { const c = list.get(s); if (c) c.status = st; };
+  for (const { msg } of night) {
+    let x;
+    if ((x = /^(\S+) (?:실제 )?지정가 매수 주문/.exec(msg))) set(x[1], 'ordered');
+    else if ((x = /^(\S+) (?:실제 )?매수 체결/.exec(msg))) set(x[1], 'held');
+    else if ((x = /^(\S+) 청산\(/.exec(msg))) set(x[1], 'closed');
+    else if ((x = /^(\S+): .*이미 지정가/.exec(msg))) set(x[1], 'missed');
+    else if ((x = /^(\S+): 나눈 돈/.exec(msg))) set(x[1], 'nocash');
+    else if ((x = /^(\S+) (?:매수 주문 취소됨|14:30까지 지정가 안 닿음|매수 주문이 \S+ 상태로 끝남)/.exec(msg))) set(x[1], 'expired');
+    else if ((x = /^오늘 주문 \d+개를 다 써서 안 삼: (.*)$/.exec(msg))) for (const s of x[1].split(', ')) set(s, 'full');
+  }
+  const open = Math.floor((first - 20_000) / 1_800_000) * 1_800_000; // 첫 후보 찾기(9:30:20쯤) → 9:30
+  return { date: new Date(open).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }), open, list: [...list.values()].sort((a, b) => b.gap - a.gap) };
 }
 
 function summary(root, key, mode) {
@@ -60,6 +91,7 @@ function summary(root, key, mode) {
     wins: trades.filter(t => t.pnl > 0).length,
     losses: trades.filter(t => t.pnl < 0).length,
     legs: legsOf(state),
+    board: key === 'gap' ? gapBoard(dir) : null,
     lastLog, lastLine,
     trades,
   };

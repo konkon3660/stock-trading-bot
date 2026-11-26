@@ -241,6 +241,11 @@ function start() {
       setFlag(ROOT, name, on); pushChanged(); return true;
     });
     handle('refreshAccount', () => refreshAccount().then(() => true));
+    handle('chart', (sym, from, to) => { // 화면의 후보·거래 차트용 1분봉 (읽기만)
+      const s = String(sym), a = Number(from), z = Number(to);
+      if (!/^[A-Z0-9.]{1,12}$/.test(s) || !Number.isFinite(a) || !Number.isFinite(z) || z <= a || z - a > 2 * 86_400_000) throw Error('차트 요청이 이상해요');
+      return toss.chart(s, a, z);
+    });
     handle('setSetting', (key, value) => {
       if (!['loginStart', 'notify'].includes(key)) throw Error('없는 설정이에요');
       settings[key] = !!value; saveSettings();

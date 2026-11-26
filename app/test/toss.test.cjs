@@ -30,6 +30,11 @@ const { marketNow, etToMs } = require('../market.cjs');
       if (d === '2026-11-27') return send(200, { result: { today: { regularMarket: { startTime: '09:30', endTime: '13:00' } } } }); // 조기 마감
       return send(200, { result: { today: { regularMarket: { startTime: '09:30', endTime: '16:00' } } } });
     }
+    if (u.pathname === '/api/v1/candles') { // 1분봉 500개를 최신부터 200개씩, nextBefore = 다음 쪽 시작 위치
+      const T0 = Date.parse('2026-11-25T23:31:00+09:00'), all = Array.from({ length: 500 }, (_, i) => ({ timestamp: new Date(T0 + i * 60_000).toISOString(), closePrice: String(1 + i / 1000) }));
+      const end = u.searchParams.get('before') ? Number(u.searchParams.get('before')) : all.length, start = Math.max(0, end - Number(u.searchParams.get('count')));
+      return send(200, { result: { candles: all.slice(start, end).reverse(), nextBefore: start > 0 ? String(start) : null } });
+    }
     send(404, {});
   });
   await new Promise(r => srv.listen(0, '127.0.0.1', r));
@@ -55,6 +60,8 @@ const { marketNow, etToMs } = require('../market.cjs');
   assert.equal(m.phase, 'after'); assert.equal(m.next.at, Date.parse('2026-11-26T10:00:00+09:00'));
   m = await marketNow(Date.parse('2026-11-26T12:00:00+09:00'), day); // 추수감사절 → 27일(금) 조기 마감일이 다음
   assert.equal(m.phase, 'closed'); assert.equal(m.next.date, '2026-11-27');
+  assert.equal(m.last.date, '2026-11-25', '한국 낮엔 지난밤(11-25) 장을 보여 줌');
+  assert.equal((await marketNow(Date.parse('2026-11-27T01:00:00+09:00'), day)).last.date, '2026-11-25', '휴장일엔 그 전 장');
   m = await marketNow(Date.parse('2026-11-27T01:00:00+09:00'), day); // 11-26 11:00 ET 휴장
   assert.equal(m.holiday, true); assert.equal(m.phase, 'closed');
   m = await marketNow(Date.parse('2026-11-28T02:00:00+09:00'), day); // 11-27 12:00 ET (13:00 마감)
@@ -64,6 +71,16 @@ const { marketNow, etToMs } = require('../market.cjs');
   m = await marketNow(Date.parse('2026-11-29T12:00:00+09:00'), () => Promise.reject(Error('네트워크 없음'))); // 일요일, 달력 못 읽음 → 평일 규칙
   assert.equal(m.source, 'guess'); assert.equal(m.next.date, '2026-11-30');
   console.log('ok 2 장 시간 (정규·애프터·프리·휴장·조기 마감·달력 없음)');
+
+  // 차트: 정규장(23:30~06:00 KST) 1분봉을 쪽을 넘겨 다 모음, 끝난 장은 캐시
+  const open = Date.parse('2026-11-25T23:30:00+09:00'), close = Date.parse('2026-11-26T06:00:00+09:00');
+  const calls = () => seen.filter(s => s.includes('/candles')).length;
+  const bars = await t.chart('ABC', open, close);
+  assert.equal(bars.length, 390); assert.equal(bars[0].t, open + 60_000); assert.equal(bars.at(-1).t, close);
+  assert.ok(bars.every((b, i) => !i || b.t > bars[i - 1].t), '시간 순서');
+  assert.equal(calls(), 3, '500개를 200개씩 3쪽');
+  await t.chart('ABC', open, close); assert.equal(calls(), 3, '끝난 장은 다시 안 받음');
+  console.log('ok 4 차트 1분봉 (쪽 넘기기·캐시)');
 
   const t2 = new TossReader({ envFile: env + '.none' });
   await assert.rejects(() => t2.account(), /토스 키 파일이 없어요/);

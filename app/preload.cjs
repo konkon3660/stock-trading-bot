@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('api', {
   takeOver: key => call('takeOver', key),
   setFlag: (name, on) => call('setFlag', name, on),
   refreshAccount: () => call('refreshAccount'),
+  chart: (sym, from, to) => call('chart', sym, from, to),
   setSetting: (key, value) => call('setSetting', key, value),
   makeShortcuts: () => call('makeShortcuts'),
   openPath: what => call('openPath', what),

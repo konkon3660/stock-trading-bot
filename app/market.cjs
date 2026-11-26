@@ -26,6 +26,9 @@ async function marketNow(now, getDay) {
     if (now < afterEnd) return { ...out, phase: 'after', next: { what: '애프터장 끝', at: afterEnd } };
   }
   const base = etToMs(p.y, p.mo, p.d, 12, 0);
+  // 다 끝난 가장 최근 장 (화면이 한국 낮에 '지난밤'을 보여 줄 때 씀)
+  out.last = today.closed ? null : { date: today.date, open: today.open, close: today.close };
+  for (let i = 1; !out.last && i <= 7; i++) { const pd = await day(ymd(etParts(base - i * DAY))); if (!pd.closed) out.last = { date: pd.date, open: pd.open, close: pd.close }; }
   for (let i = 1; i <= 7; i++) {
     const nd = await day(ymd(etParts(base + i * DAY)));
     if (!nd.closed) return { ...out, phase: 'closed', next: { what: '정규장 시작', at: nd.open, date: nd.date }, session: { date: nd.date, open: nd.open, close: nd.close } };

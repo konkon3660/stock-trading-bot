@@ -81,9 +81,11 @@ function renderTop() {
 
 // ---------- 오늘 밤: 세션 띠 위에 봇 한 줄씩 ----------
 function frame() { // 프리장 시작 ~ 애프터장 끝 (한국 시각으로 대략 18:00 ~ 10:00)
-  const s = snap.market?.session; if (!s?.open) return null;
+  const m = snap.market; let s = m?.session; if (!s?.open) return null;
+  const next = s, past = !!m.last?.open && snap.now < s.open - 5.5 * HOUR; // 장이 다 끝나고 다음 프리장 전(한국 낮)엔 지난밤을 보여 줌
+  if (past) s = m.last;
   const close = s.close || s.open + 6.5 * HOUR;
-  return { s, close, F0: s.open - 5.5 * HOUR, F1: close + 4 * HOUR };
+  return { s, close, F0: s.open - 5.5 * HOUR, F1: close + 4 * HOUR, past, next };
 }
 const at = (f, t) => Math.max(0, Math.min(100, ((t - f.F0) / (f.F1 - f.F0)) * 100));
 const workOf = (f, key) => ({ gap: [f.s.open, f.close - 2 * MIN], hold: [f.s.open + MIN, f.close], ah: [f.close, f.close + 230 * MIN] }[key]);
@@ -140,9 +142,74 @@ function renderNight() {
     for (let t = Math.ceil(f.F0 / HOUR) * HOUR; t <= f.F1; t += HOUR) if (Number(hm(t).slice(0, 2)) % 2 === 0 && at(f, t) > 2 && at(f, t) < 98) ticks += `<span style="left:${at(f, t)}%">${hm(t)}</span>`;
     sky += `<div class="axis">${ticks}</div>`;
     if (now >= f.F0 && now <= f.F1) sky += `<div class="now" style="left:${at(f, now)}%"><span>지금 ${hm(now)}</span></div>`;
+    else if (f.past) sky += `<div class="offframe">지난밤 (${mdOf(f.s.date)} 미국장). 다음 프리장은 ${dur(f.next.open - 5.5 * HOUR - now)} 뒤 ${hm(f.next.open - 5.5 * HOUR)}에 열려요</div>`;
     else if (now < f.F0) sky += `<div class="offframe">지금 ${hm(now)}, ${dur(f.F0 - now)} 뒤 프리장이 열려요</div>`;
   }
   put($('night'), `<div class="sky">${sky}</div><div class="corner"></div><div class="labels"></div>${snap.bots.map(b => laneHtml(b, f)).join('')}<div class="corner foot-row"></div><div class="foot-row"></div>`);
+}
+
+// ---------- 갭 후보 차트: 봇이 9:30에 찾은 후보마다 그날 1분봉 + 시가·지정가 선 + 산 곳▲·판 곳▼ ----------
+const charts = new Map(); // 'SYM|from|to' → { bars, at, busy }
+function chartOf(sym, from, to) { // 없으면 받아 오고(앱 본체가 캐시), 받으면 다시 그림. 장중엔 55초마다 새로
+  if (!API?.chart) return undefined;
+  const k = `${sym}|${from}|${to}`, h = charts.get(k), live = to > snap.now - MIN;
+  if (!h || (!h.busy && live && Date.now() - h.at > 55_000)) {
+    charts.set(k, { bars: h?.bars ?? null, at: Date.now(), busy: true });
+    API.chart(sym, from, to).then(bars => { charts.set(k, { bars, at: Date.now() }); renderReel(); })
+      .catch(() => { charts.set(k, { bars: h?.bars ?? [], at: Date.now() }); renderReel(); });
+  }
+  return h?.bars ?? null;
+}
+const STATUS = { seen: ['기다리는 중', ''], ordered: ['주문 걸어 둠', 'lamp'], held: ['들고 있음', 'lamp'], missed: ['닿고 튐', ''], nocash: ['현금 부족', ''], full: ['자리 없음', ''], expired: ['안 닿음', ''], closed: ['팔았음', ''] };
+function sparkSvg(bars, o) {
+  const W = 300, H = 104, P = 7, pts = bars.map(b => b.c), marks = [...o.buys, ...o.sells].filter(m => m.p > 0 && Number.isFinite(m.t));
+  let lo = Math.min(...pts, ...[o.open, o.level].filter(v => v > 0), ...marks.map(m => m.p)), hi = Math.max(...pts, ...[o.open, o.level, o.target].filter(v => v > 0), ...marks.map(m => m.p));
+  if (o.stop > 0 && lo <= o.stop * 1.05) lo = Math.min(lo, o.stop); // 손절선(-20%)은 가격이 근처까지 왔을 때만
+  const pad = (hi - lo) * 0.1 || hi * 0.02; lo -= pad; hi += pad;
+  const x = t => P + ((Math.max(o.from, Math.min(o.to, t)) - o.from) / (o.to - o.from)) * (W - 2 * P), y = v => P + ((hi - v) / (hi - lo)) * (H - 2 * P);
+  const line = bars.map((b, i) => `${i ? 'L' : 'M'}${x(b.t).toFixed(1)},${y(b.c).toFixed(1)}`).join('');
+  const area = `${line}L${x(bars.at(-1).t).toFixed(1)},${H}L${x(bars[0].t).toFixed(1)},${H}Z`;
+  const ref = (v, cls) => (v > lo && v < hi ? `<line class="${cls}" x1="0" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>` : '');
+  const buy = m => `<path class="mk buy" d="M${x(m.t).toFixed(1)},${(y(m.p) + 3).toFixed(1)}l-5.5,9h11z"><title>${esc(`산 곳 ${hm(m.t)} ${px(m.p)}`)}</title></path>`;
+  const sell = m => `<path class="mk sell ${m.cls}" d="M${x(m.t).toFixed(1)},${(y(m.p) - 3).toFixed(1)}l-5.5,-9h11z"><title>${esc(`판 곳 ${hm(m.t)} ${px(m.p)}`)}</title></path>`;
+  const tip = bars.at(-1), live = o.to > snap.now && snap.now - tip.t < 3 * MIN;
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(`${o.sym} 1분봉, 마지막 ${px(tip.c)}`)}">
+    <path class="ar ${o.cls}" d="${area}"/>${ref(o.open, 'open')}${ref(o.level, 'level')}${ref(o.target, 'target')}${ref(o.stop, 'stop')}
+    <path class="ln" d="${line}"/>${o.buys.filter(m => m.p > 0).map(buy).join('')}${o.sells.filter(m => m.p > 0).map(sell).join('')}
+    ${live ? `<circle class="live-dot" cx="${x(tip.t).toFixed(1)}" cy="${y(tip.c).toFixed(1)}" r="4"/>` : ''}</svg>`;
+}
+function tradeCard({ sym, bot, c, ts, leg, from, to }) {
+  const bars = chartOf(sym, from, to), pnl = ts.reduce((a, t) => a + (t.pnl ?? 0), 0);
+  const buys = [...new Map([...ts.filter(t => t.buyTime).map(t => [t.buyTime, { t: kstOf(t.date, t.buyTime), p: t.buyPx }]), ...(leg?.t ? [['leg', { t: leg.t, p: leg.px }]] : [])]).values()];
+  const sells = ts.map(t => ({ t: kstOf(t.date, t.time), p: t.sellPx, cls: signCls(t.pnl) }));
+  const t0 = ts[0], target = leg?.target ?? t0?.target, stop = leg?.stop ?? t0?.stop;
+  const [stTxt, stCls] = STATUS[c?.status] ?? STATUS.seen;
+  const chip = ts.length ? `<span class="chip ${signCls(pnl)}">${esc([...new Set(ts.map(t => t.reason))].join(', '))} ${usd(pnl)}</span>` : `<span class="chip ${stCls}">${stTxt}</span>`;
+  const ref = c?.o ?? bars?.[0]?.c, tip = bars?.at(-1), chg = tip && ref ? tip.c / ref - 1 : NaN, past = to < snap.now;
+  const cardCls = ts.length ? (pnl > 0.004 ? 'won' : pnl < -0.004 ? 'lost' : '') : c?.status === 'held' || c?.status === 'ordered' ? 'live' : '';
+  const body = bars === undefined ? '<div class="spark-wait">앱을 다시 켜면 차트가 나와요</div>'
+    : bars === null ? '<div class="spark-wait">차트 불러오는 중</div>'
+    : !bars.length ? '<div class="spark-wait">이 시간대엔 거래가 없었어요</div>'
+    : sparkSvg(bars, { sym, from, to, open: c?.o, level: c?.level, target, stop, buys, sells, cls: rateCls(chg) });
+  return `<article class="tcard ${cardCls}">
+    <header><b>${esc(sym)}</b><span class="tag">${SHORT[bot]}</span>${c ? `<span class="gap">갭 +${Math.round(c.gap * 100)}%</span>` : ''}${chip}</header>
+    ${body}
+    <footer>${c ? `<span>시가 ${px(c.o)}</span><span class="lv">지정가 ${px(c.level)}</span>` : ''}${tip ? `<span class="grow"></span><span>${past ? '마지막' : '지금'} <b>${px(tip.c)}</b> <b class="${rateCls(chg)}">${pctTxt(chg)}</b></span>` : ''}</footer>
+  </article>`;
+}
+function renderReel() {
+  const el = $('reel'), gapBot = snap.bots.find(b => b.key === 'gap'), board = gapBot && summaryFor(gapBot)?.board;
+  if (!board?.list?.length) { el.hidden = true; put(el, ''); return; }
+  const m = snap.market, ses = [m?.session, m?.last].find(s => s?.date === board.date && s.open);
+  const open = ses?.open ?? board.open, close = ses?.close ?? open + 6.5 * HOUR;
+  const trades = visibleTrades().filter(t => t.date === board.date), legs = legsOf(snap.stats.bots.gap?.live);
+  const tonight = m?.session?.date === board.date && m.phase !== 'closed';
+  let cards = board.list.map(c => tradeCard({ sym: c.s, bot: 'gap', c, ts: trades.filter(t => t.bot === 'gap' && t.sym === c.s), leg: legs.find(g => g.sym === c.s && g.st === 'hold'), from: open, to: close }));
+  const others = new Map(); // 같은 밤 애프터장·보유 관리 거래도 같은 모양으로
+  for (const t of trades.filter(t => t.bot !== 'gap')) { const k = `${t.bot}|${t.sym}`; others.set(k, [...(others.get(k) ?? []), t]); }
+  for (const ts of others.values()) { const ah = ts[0].bot === 'ah'; cards.push(tradeCard({ sym: ts[0].sym, bot: ts[0].bot, ts, from: ah ? close : open, to: ah ? close + 4 * HOUR : close })); }
+  el.hidden = false;
+  put(el, `<div class="reel-head"><h2>${tonight ? '오늘 밤' : '지난밤'} 갭 후보</h2><span class="meta">${mdOf(board.date)} 미국장, 갭 큰 순서. 시가 -5% 지정가(노란 점선)에 닿으면 사요</span></div><div class="reel-grid">${cards.join('')}</div>`);
 }
 
 // ---------- 지금 들고 있는 것 ----------
@@ -262,7 +329,7 @@ function renderFoot() {
   $('set-login').closest('label').title = `봇 실행: ${snap.node}`;
 }
 
-function render() { if (!snap) return; renderTop(); renderNight(); renderHeld(); renderScore(); renderAccount(); renderTabs(); renderFoot(); if (logKey === 'trades') void loadLog(); }
+function render() { if (!snap) return; renderTop(); renderNight(); renderReel(); renderHeld(); renderScore(); renderAccount(); renderTabs(); renderFoot(); if (logKey === 'trades') void loadLog(); }
 async function refresh() { if (!API) return; try { snap = await API.snapshot(); render(); } catch (e) { toast(msgOf(e)); } }
 const msgOf = e => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 let toastT = null;

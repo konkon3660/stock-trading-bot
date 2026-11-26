@@ -18,7 +18,7 @@ function parseEnv(text) {
 class TossReader {
   constructor({ envFile, tokenFile = null, base = process.env.TOSS_BOT_API_BASE || 'https://openapi.tossinvest.com', fetchImpl = globalThis.fetch, gapMs = 150 }) {
     this.envFile = envFile; this.tokenFile = tokenFile; this.base = base; this.fetch = fetchImpl; this.gapMs = gapMs; this.issued = 0;
-    this.tok = null; this.bad = null; this.acct = null; this.queue = Promise.resolve(); this.cal = new Map();
+    this.tok = null; this.bad = null; this.acct = null; this.queue = Promise.resolve(); this.cal = new Map(); this.charts = new Map();
   }
   env() {
     if (!this._env) {
@@ -97,6 +97,24 @@ class TossReader {
       at: Date.now(), cashUsd: num(bp?.cashBuyingPower), items,
       usd: { value: num(h?.marketValue?.amount?.usd), pnl: num(h?.profitLoss?.amount?.usd), daily: num(h?.dailyProfitLoss?.amount?.usd) },
     };
+  }
+  // 1분봉 종가 [{ t, c }], from < t <= to. 토스 분봉 t는 봉이 '끝나는' 시각. 최신부터 거꾸로 최대 6쪽(200개씩) 받아 from까지 채움.
+  // 끝난 구간은 계속 캐시, 진행 중이면 50초 지나야 최신 한 쪽만 다시 받음 (봇들과 같은 키라 호출을 아낌)
+  async chart(symbol, from, to) {
+    const key = `${symbol}|${from}|${to}`, hit = this.charts.get(key), now = Date.now();
+    if (hit && (hit.done || now - hit.at < 50_000)) return hit.bars;
+    let bars = hit?.bars ?? [], before;
+    for (let k = 0; k < (hit ? 1 : 6); k++) {
+      const r = await this.call('GET', '/api/v1/candles', { query: { symbol, interval: '1m', count: 200, before } });
+      const page = (r?.candles ?? []).map(c => ({ t: Date.parse(c.timestamp), c: num(c.closePrice) })).filter(b => Number.isFinite(b.t) && b.c > 0);
+      const seen = new Set(bars.map(b => b.t)); bars = [...bars, ...page.filter(b => !seen.has(b.t))];
+      before = r?.nextBefore;
+      if (!page.length || !before || Math.min(...page.map(b => b.t)) <= from) break;
+    }
+    bars = bars.filter(b => b.t > from && b.t <= to).sort((a, b) => a.t - b.t);
+    this.charts.set(key, { at: now, bars, done: now > to + 5 * 60_000 });
+    if (this.charts.size > 120) this.charts.delete(this.charts.keys().next().value);
+    return bars;
   }
   // 그 날(미국 동부 날짜) 정규장 시작·마감 (휴장이면 closed)
   async calendarDay(date, etToMs) {
