@@ -218,7 +218,7 @@ function start() {
         const lim = `손실 한도(갭·애프터장 합계): 하루 $${L?.dailyLossLimitUsd}, 누적 $${L?.totalLossLimitUsd} (orb\\live.json)`;
         const extra = key === 'gap' ? `\n\n갭 큰 ${L?.gapSlots ?? 5}종목까지 ${L?.perTradeUsd === 'all' ? '주문 가능 달러 현금을 나눠' : `$${L?.perTradeUsd}씩`} 동시에 사요.\n${lim}`
           : key === 'ah' ? `\n\n애프터장 실전은 토스 API 주문이 애프터장에 실제로 들어가는지 확인(orb_paper.mjs --test-order) 뒤에 켜는 게 좋아요. 돈은 주문 가능 달러 현금을 최대 5종목에 나눠 써요.\n${lim}`
-          : '\n\norb\\hold_only.txt에 적은 미국 주식만 +10% / -20%에 실제로 팔아요.';
+          : '\n\n봇이 사지 않은 미국 보유 주식도 +10% / -20%에 실제로 팔아요(한국 주식·orb\\hold_skip.txt 종목 제외).';
         if (!await ask(`${b.name}을(를) 실전으로 바꿀까요?`, `토스에 실제 주문이 나가요.${extra}`, '실전으로 바꾸기')) return false;
       } else if (b.runMode === 'live') {
         const note = await riskNote(b);

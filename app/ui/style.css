@@ -91,7 +91,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .st::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .st.running { color: var(--lamp); } .st.running::before { box-shadow: 0 0 8px var(--lamp); }
 .st.waiting { color: var(--warn); } .st.gave-up { color: var(--up); } .st.external { color: var(--violet); }
-.st-sub { font-size: 13px; color: var(--mist); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-sub { flex: 1 1 0; min-width: 0; font-size: 13px; color: var(--mist); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* 줄바꿈 대신 말줄임 — 모드 버튼은 이름 줄에 남게 */
 .doing { font-size: 13.5px; color: var(--mist); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .doing time { color: var(--ink); margin-right: 7px; font-weight: 600; }
 .lh-act { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 3px; }

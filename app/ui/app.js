@@ -44,7 +44,9 @@ function kstOf(date, t) { // trades.csv의 'MM-DD HH:MM:SS'(KST) → ms
 
 // ---------- 데이터 (예전 모양도) ----------
 const legsOf = s => s?.legs ?? [...(s?.pos ? [{ ...s.pos, st: 'hold' }] : []), ...(s?.buy ? [{ ...s.buy, st: 'buy' }] : [])];
-const holdOnly = () => new Set((snap.stats.holdOnly ?? []).map(x => String(x).toUpperCase()));
+const holdSkip = () => new Set((snap.stats.holdSkip ?? []).map(x => String(x).toUpperCase()));
+const botSyms = () => new Set(Object.values(snap.stats.bots).flatMap(x => legsOf(x?.live).map(g => g.sym)));
+const kr = it => it.currency === 'KRW' || it.country === 'KR';
 const holdOn = () => snap.bots.find(b => b.key === 'hold')?.mode !== 'off';
 // 실전 거래 + 지금 연습 모드인 봇의 연습 거래만 (연습 '팔 것' 기록처럼 손익 없는 줄은 뺌)
 const visibleTrades = () => snap.stats.trades.filter(t => (t.mode === 'live' || snap.bots.find(b => b.key === t.bot)?.mode === 'paper') && t.pnl !== null);
@@ -155,7 +157,7 @@ function gauge(o) { // 손절(-20%) ─ 산 값 ─ 목표(+10%) 위에 지금 �
   </div>`;
 }
 function renderHeld() {
-  const a = snap.account?.data, last = new Map((a?.items ?? []).map(it => [it.symbol, it.last])), only = holdOnly();
+  const a = snap.account?.data, last = new Map((a?.items ?? []).map(it => [it.symbol, it.last])), skip = holdSkip(), mine = botSyms();
   let h = '';
   for (const b of snap.bots) {
     if (b.key === 'hold') continue;
@@ -163,7 +165,7 @@ function renderHeld() {
       ? `<div class="wait"><b>${esc(g.sym)}</b><span class="tag">${SHORT[b.key]}</span><span>${px(g.level)}에 ${g.qty}주 사려고 기다리는 중</span></div>`
       : gauge({ sym: g.sym, tag: SHORT[b.key], qty: g.qty, base: g.px, stop: g.stop, target: g.target, now: last.get(g.sym), baseLabel: '산 값' });
   }
-  if (holdOn()) for (const it of a?.items ?? []) if (it.currency !== 'KRW' && it.avg > 0 && only.has(String(it.symbol).toUpperCase()))
+  if (holdOn()) for (const it of a?.items ?? []) if (!kr(it) && it.avg > 0 && !mine.has(it.symbol) && !skip.has(String(it.symbol).toUpperCase())) // 보유 주식 관리가 +10%/-20%에 파는 종목
     h += gauge({ sym: it.symbol, name: it.name, tag: '보유 관리', qty: it.qty, base: it.avg, stop: it.avg * 0.8, target: it.avg * 1.1, now: it.last, baseLabel: '평균' });
   if (!h) { const m = snap.market; h = `<p class="empty">봇이 들고 있는 주식이 없어요.${m?.session?.open && m.phase !== 'regular' && m.phase !== 'after' ? ` 갭 봇은 ${hm(m.session.open)}에 정규장이 열리면 주문을 걸어요.` : ''}</p>`; }
   put($('held'), h);
@@ -207,13 +209,13 @@ function renderAccount() {
   $('acct-refresh').textContent = A?.busy ? '불러오는 중' : '새로고침';
   $('acct-meta').textContent = a ? `${hm(a.at)} 기준` : '';
   if (!a) { put(el, A?.error ? `<p class="err">계좌를 못 읽었어요: ${esc(A.error)}</p><p class="muted">토스 키 파일(toss-mcp\\.env)과 인터넷 연결을 확인한 뒤 새로고침을 눌러 주세요.</p>` : '<p class="empty">계좌를 불러오는 중이에요</p>'); return; }
-  const only = holdOnly(), on = holdOn(), botSyms = new Set(Object.values(snap.stats.bots).flatMap(x => legsOf(x?.live).map(g => g.sym)));
+  const skip = holdSkip(), on = holdOn(), mine = botSyms();
   let h = `<div class="acct-sum"><div><span>평가금(달러)</span><b>${usd(a.usd.value, { sign: false })}</b></div><div><span>평가 손익</span><b>${money(a.usd.pnl)}</b></div><div><span>오늘</span><b>${money(a.usd.daily)}</b></div></div>`;
   if (A.error) h += `<p class="err">마지막 새로고침 실패: ${esc(A.error)}</p>`;
   if (!a.items.length) h += '<p class="empty">보유 주식이 없어요</p>';
   for (const it of a.items) {
-    const kr = it.currency === 'KRW' || it.country === 'KR', f = kr ? krw : px, bot = botSyms.has(it.symbol), managed = !kr && on && only.has(String(it.symbol).toUpperCase());
-    const rule = kr ? '한국 주식, 봇이 안 건드려요' : bot ? '갭·애프터장 봇이 관리 중' : managed ? `${px(it.avg * 1.1)} 넘거나 ${px(it.avg * 0.8)} 밑이면 봇이 팔아요` : '봇이 안 건드려요';
+    const k = kr(it), f = k ? krw : px, bot = mine.has(it.symbol), skipped = skip.has(String(it.symbol).toUpperCase()), managed = !k && on && !bot && !skipped;
+    const rule = k ? '한국 주식, 봇이 안 건드려요' : bot ? '갭·애프터장 봇이 관리 중' : skipped ? 'hold_skip.txt, 봇이 안 건드려요' : managed ? `${px(it.avg * 1.1)} 넘거나 ${px(it.avg * 0.8)} 밑이면 봇이 팔아요` : '봇이 안 건드려요';
     const w = Math.min(50, Math.abs(it.rate ?? 0) * 200); // 막대 끝 = ±25%
     h += `<div class="hrow"><div class="nm"><b>${esc(it.name)}</b><span class="sym">${esc(it.symbol)}, ${it.qty}주</span><span class="rule${bot || managed ? ' managed' : ''}">${esc(rule)}</span></div>`
       + `<div class="pr">${f(it.avg)} → <b>${f(it.last)}</b></div><div class="dbar" aria-hidden="true"><i class="${rateCls(it.rate)}" style="left:${it.rate >= 0 ? 50 : 50 - w}%;width:${w}%"></i></div><div class="rt ${rateCls(it.rate)}">${pctTxt(it.rate)}</div></div>`;

@@ -86,8 +86,8 @@ function readStats(root) {
   curve.sort((a, b) => key(a).localeCompare(key(b))); // 실전 갭·애프터장 봇 거래 전부, 오래된 것부터 (봇이 번 돈 곡선)
   const flags = {};
   for (const f of ['STOP_GAP', 'STOP_HOLD', 'STOP_AH', 'FLATTEN_GAP']) flags[f] = fs.existsSync(path.join(orb, f));
-  const only = (() => { try { return fs.readFileSync(path.join(orb, 'hold_only.txt'), 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim().toUpperCase()).filter(Boolean); } catch { return []; } })();
-  return { bots, trades: all.slice(0, 60), curve, flags, limits: readJson(path.join(orb, 'live.json'), null), holdOnly: only };
+  const skip = (() => { try { return fs.readFileSync(path.join(orb, 'hold_skip.txt'), 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim()).filter(Boolean); } catch { return []; } })();
+  return { bots, trades: all.slice(0, 60), curve, flags, limits: readJson(path.join(orb, 'live.json'), null), holdSkip: skip };
 }
 
 // 기록 파일 끝부분만 (큰 파일도 빠르게)

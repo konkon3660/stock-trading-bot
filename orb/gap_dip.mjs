@@ -457,12 +457,11 @@ async function main() {
 }
 // ---------- 보유 주식 관리 (--hold): 봇이 사지 않은 미국 주식(원래 갖고 있던 것·앱에서 직접 산 것)도
 // 평균 매입가 대비 +10% 이상이면 팔고 -20% 이하면 팖. 장 마감 정리는 안 함. 2026-11-24 사용자: "이미 매수한 것도 인식하도록" → "손절·목표 적용"
-// 2026-11-26: 전부 관리(hold_skip.txt로 빼기) → orb/hold_only.txt에 적은 종목만. +10%/-20%는 갭 눌림 진입용으로 검증한 숫자라 아무 종목에나 맞는 게 아님
-//   (그때까지 15건 매도, 평균 매입가 대비 -$22.94 — 대부분 이미 -20~-93% 빠져 있던 종목)
+// 2026-11-26 사용자: 미국 보유 주식은 봇이 다 관리해도 됨 (+10%/-20%는 갭 눌림 진입용으로 검증한 숫자라는 것 알고 정함). 빼고 싶은 종목만 hold_skip.txt
 // 실행: node orb/gap_dip.mjs --hold [--once] (연습: 주문 없이 기록만) / --hold --live (실제 매도). 멈추기: orb\STOP_HOLD. 기록: orb/data-hold[-live]/
 const STOP_HOLD_F = join(HERE, 'STOP_HOLD');
-const HOLD_ONLY_F = process.env.GAP_HOLD_ONLY || join(HERE, 'hold_only.txt'); // 관리할 종목 (한 줄에 하나, # 뒤는 메모). 매번 다시 읽어서 고치면 바로 반영
-const holdOnly = () => { try { return new Set(readFileSync(HOLD_ONLY_F, 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim().toUpperCase()).filter(Boolean)); } catch { return new Set(); } };
+const HOLD_SKIP_F = join(HERE, 'hold_skip.txt'); // 건너뛸 종목 (한 줄에 하나, # 뒤는 메모). 매번 다시 읽어서 고치면 바로 반영
+const holdSkip = () => { try { return new Set(readFileSync(HOLD_SKIP_F, 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim().toUpperCase()).filter(Boolean)); } catch { return new Set(); } };
 const sv = v => (typeof v === 'string' ? v : String(v?.code ?? v?.value ?? v?.name ?? ''));
 const HOLD_HEADER = ['날짜(ET)', '시각(KST)', '종목', '사유', '보유수량', '평균매입가', '판단가', '판단수익률', '매도수량', '매도평균가', '손익USD(평균매입가 대비)', '모드', '주문ID'];
 function holdCsv(row) { const f = join(DATA, 'trades.csv'); if (!existsSync(f)) appendFileSync(f, '﻿' + HOLD_HEADER.join(',') + '\n'); appendFileSync(f, row.map(v => (typeof v === 'string' && /[",]/.test(v) ? `"${v}"` : v)).join(',') + '\n'); }
@@ -475,10 +474,9 @@ async function holdScan(P, sess, done, noted) {
   const gs = readState(stateOf('gap'));
   const gapSyms = new Set([...(gs.days?.[sess.date]?.done ?? []), ...(gs.legDate === sess.date ? (gs.legs ?? []).map(g => g.s) : [])]);
   const us = items.filter(x => sv(x.marketCountry) === 'US' && num(x.quantity) > 0 && num(x.averagePurchasePrice) > 0 && !done.has(x.symbol));
-  const only = holdOnly();
-  const todo = us.filter(x => { if (!only.has(String(x.symbol).toUpperCase())) return false; if (!gapSyms.has(x.symbol)) return true; if (!noted.has(x.symbol)) log(`${x.symbol}: 갭 봇이 오늘 거래한 종목이라 안 건드림`); noted.add(x.symbol); return false; });
-  const key = '#list ' + todo.map(x => x.symbol).join(','); // 목록이 바뀌면 다시 알림
-  if (!noted.has(key)) { noted.add(key); log(`보유 미국 주식 ${us.length}종목 중 hold_only.txt에 적힌 ${todo.length}종목 관리${todo.length ? ': ' + todo.map(x => x.symbol).join(', ') : only.size ? '' : ' (목록이 비어 있어서 아무것도 안 팖)'}`); }
+  const skip = holdSkip();
+  const todo = us.filter(x => { const why = gapSyms.has(x.symbol) ? '갭 봇이 오늘 거래한 종목' : skip.has(String(x.symbol).toUpperCase()) ? 'hold_skip.txt에 적힌 종목' : null; if (!why) return true; if (!noted.has(x.symbol)) log(`${x.symbol}: ${why}이라 안 건드림`); noted.add(x.symbol); return false; });
+  if (!noted.has('#first')) { noted.add('#first'); log(`보유 미국 주식 ${us.length}종목 확인 (관리 대상 ${todo.length}종목)`); }
   if (!todo.length) return;
   let px = new Map(); try { px = await P.prices(todo.map(x => x.symbol)); } catch (e) { log(`현재가 조회 실패 — 보유 주식 화면 가격으로 판단: ${e.message}`); }
   for (const x of todo) {
@@ -497,7 +495,7 @@ async function holdScan(P, sess, done, noted) {
   }
 }
 async function holdMain(P) {
-  log(`시작 — 보유 주식 관리 ${LIVE ? '⚠ 실전: 토스에 실제 매도 주문' : '(연습: 주문 없이 기록만)'}. orb\\hold_only.txt에 적은 미국 주식만 평균 매입가 대비 +${G.tp * 100}% 이상이면 팔고 -${G.sl * 100}% 이하면 팜(1분마다, 정규장만, 종목당 하루 한 번). 갭 봇이 오늘 거래한 종목은 안 건드림. 멈추기: orb\\STOP_HOLD`);
+  log(`시작 — 보유 주식 관리 ${LIVE ? '⚠ 실전: 토스에 실제 매도 주문' : '(연습: 주문 없이 기록만)'}. 봇이 사지 않은 미국 주식을 평균 매입가 대비 +${G.tp * 100}% 이상이면 팔고 -${G.sl * 100}% 이하면 팜(1분마다, 정규장만, 종목당 하루 한 번). 한국 주식·갭 봇이 오늘 거래한 종목·orb\\hold_skip.txt 종목은 안 건드림. 멈추기: orb\\STOP_HOLD`);
   if (LIVE) log(`계좌 accountSeq ${await P.accountSeq()}`);
   for (;;) {
     const sess = await P.session(now());
@@ -614,7 +612,7 @@ async function ahDay(P, sess) {
       }
       if (g.st === 'hold') await manage(g, lp, t >= exitAt);
     }
-    if (t >= exitAt + 8 * MIN) { for (const g of legs) if (g.st === 'hold') log(`⚠ ${g.s} ${g.qty}주를 19:58까지 못 팔았어요 — 토스 앱에서 확인해 주세요(orb\\hold_only.txt에 적으면 다음 날 보유 주식 관리가 +10%/-20%에 팜)`); break; }
+    if (t >= exitAt + 8 * MIN) { for (const g of legs) if (g.st === 'hold') log(`⚠ ${g.s} ${g.qty}주를 19:58까지 못 팔았어요 — 토스 앱에서 확인해 주세요(다음 날엔 보유 주식 관리 규칙을 받음)`); break; }
     await sleep(MOCK ? 60_000 : 3000);
   }
   log(`=== ${sess.date} 애프터장 끝: 주문 ${legs.length}건${LIVE ? `, 오늘 $${D.pnl.toFixed(2)}, 누적 $${S.cum.toFixed(2)}` : ''}`);
