@@ -3,7 +3,7 @@
 //   · PC 켤 때 자동 시작(--hidden: 창 없이 트레이에서 시작) · 창을 닫아도 트레이에 남음 · 종료는 트레이 메뉴
 //   · 두 번 실행하면 이미 떠 있는 창을 앞으로 · 봇이 도는 동안 PC 절전 방지 · 체결·청산·오류는 알림
 // 실행 파일: app/runtime/TossBot.exe (Electron 44.5.0, runtime/resources/app/boot.cjs → 이 파일)
-const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, ipcMain, dialog, shell, powerSaveBlocker, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, dialog, shell, powerSaveBlocker, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
@@ -75,12 +75,11 @@ function start() {
     applyLoginStart(); // 매번 다시 등록 → 폴더를 옮겨도 새 위치로
 
     // ---------- 창 ----------
-    const dark = () => nativeTheme.shouldUseDarkColors;
     // 노트북 배율(125~150%)에서도 창이 화면 밖으로 안 나가게 작업 영역에 맞춤
     const work = (() => { try { return screen.getPrimaryDisplay().workAreaSize; } catch { return { width: 1440, height: 900 }; } })();
     win = new BrowserWindow({
       width: Math.min(1480, Math.round(work.width * 0.94)), height: Math.min(940, Math.round(work.height * 0.94)), minWidth: 860, minHeight: 560, show: false, title: '토스 봇',
-      icon: icons.image(nativeImage, 'live', 64, 1), backgroundColor: dark() ? '#141619' : '#f4f5f7',
+      icon: icons.image(nativeImage, 'live', 64, 1), backgroundColor: '#0e1728', // 화면은 밤 색 하나 (ui/style.css)
       webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
     win.removeMenu();
@@ -195,8 +194,9 @@ function start() {
     // 지금 끄거나 다시 켜면 위험한 경우 (봇이 들고 있는 주식·걸어 둔 주문, 애프터장 도중)
     async function riskNote(b) {
       const s = readStats(ROOT).bots[b.key]?.live, notes = [];
-      if (b.runMode === 'live' && s?.pos) notes.push(`지금 ${s.pos.sym} ${s.pos.qty}주를 들고 있어요. 꺼져 있는 동안은 -20% 손절 감시가 멈춰요(+10% 목표 매도 주문은 토스에 걸려 있어요). 다시 켜면 이어서 관리해요.`);
-      if (b.runMode === 'live' && s?.buy) notes.push(`${s.buy.sym} 매수 주문($${s.buy.level})이 걸려 있어요. 다시 켜면 이어서 관리해요.`);
+      const legs = b.runMode === 'live' ? s?.legs ?? [] : [], held = legs.filter(g => g.st === 'hold'), wait = legs.filter(g => g.st === 'buy');
+      if (held.length) notes.push(`지금 ${held.map(g => `${g.sym} ${g.qty}주`).join(', ')}를 들고 있어요. 꺼져 있는 동안은 -20% 손절 감시가 멈춰요(+10% 목표 매도 주문은 토스에 걸려 있어요). 다시 켜면 이어서 관리해요.`);
+      if (wait.length) notes.push(`매수 주문 ${wait.map(g => `${g.sym} $${g.level}`).join(', ')}이 걸려 있어요. 다시 켜면 이어서 관리해요.`);
       if (b.key === 'ah' && b.runMode === 'live') { const m = await marketInfo(); if (m.phase === 'after') notes.push('애프터장 도중이에요. 애프터장 봇은 다시 켜도 오늘 넣은 주문을 이어서 관리하지 못해요 — 남은 주문·보유는 토스 앱에서 직접 확인해야 해요.'); }
       return notes.join('\n\n');
     }
@@ -215,9 +215,10 @@ function start() {
       const b = botOf(key), L = readStats(ROOT).limits;
       if (mode === b.mode) return true;
       if (mode === 'live') {
-        const extra = key === 'gap' ? `\n\n거래당 금액: ${L?.perTradeUsd === 'all' ? '주문 가능 달러 현금 전부' : `$${L?.perTradeUsd}`} · 하루 손실 한도 $${L?.dailyLossLimitUsd} · 누적 $${L?.totalLossLimitUsd} (orb\\live.json)`
-          : key === 'ah' ? '\n\n애프터장 실전은 토스 API 주문이 애프터장에 실제로 들어가는지 확인(orb_paper.mjs --test-order) 뒤에 켜는 게 좋아요. 돈은 주문 가능 달러 현금을 최대 5종목에 나눠 써요.'
-          : '\n\n봇이 사지 않은 미국 보유 주식도 +10% / -20%에 실제로 팔아요(한국 주식·orb\\hold_skip.txt 종목 제외).';
+        const lim = `손실 한도(갭·애프터장 합계): 하루 $${L?.dailyLossLimitUsd}, 누적 $${L?.totalLossLimitUsd} (orb\\live.json)`;
+        const extra = key === 'gap' ? `\n\n갭 큰 ${L?.gapSlots ?? 5}종목까지 ${L?.perTradeUsd === 'all' ? '주문 가능 달러 현금을 나눠' : `$${L?.perTradeUsd}씩`} 동시에 사요.\n${lim}`
+          : key === 'ah' ? `\n\n애프터장 실전은 토스 API 주문이 애프터장에 실제로 들어가는지 확인(orb_paper.mjs --test-order) 뒤에 켜는 게 좋아요. 돈은 주문 가능 달러 현금을 최대 5종목에 나눠 써요.\n${lim}`
+          : '\n\norb\\hold_only.txt에 적은 미국 주식만 +10% / -20%에 실제로 팔아요.';
         if (!await ask(`${b.name}을(를) 실전으로 바꿀까요?`, `토스에 실제 주문이 나가요.${extra}`, '실전으로 바꾸기')) return false;
       } else if (b.runMode === 'live') {
         const note = await riskNote(b);

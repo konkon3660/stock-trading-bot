@@ -85,7 +85,7 @@ async function until(fn, ms = 4000, what = '') { const t = Date.now(); while (Da
   answer = 1; const n = rec.dialogs.length;
   assert.equal(await call('setMode', 'gap', 'live'), false);
   assert.equal(rec.dialogs.length, n + 1); assert.match(rec.dialogs.at(-1).message, /실전으로 바꿀까요/);
-  assert.match(rec.dialogs.at(-1).detail, /주문 가능 달러 현금 전부/);
+  assert.match(rec.dialogs.at(-1).detail, /5종목까지 주문 가능 달러 현금을 나눠/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'orb', 'modes.json'), 'utf8')).gap, 'paper');
   answer = 0;
   assert.equal(await call('setMode', 'gap', 'live'), true);
@@ -93,10 +93,12 @@ async function until(fn, ms = 4000, what = '') { const t = Date.now(); while (Da
   console.log('ok 4 모드 바꾸기 (실전은 확인 · 취소하면 그대로)');
 
   // 봇이 주식을 들고 있으면 끄기 전에 경고
-  fs.writeFileSync(path.join(root, 'orb', 'data-gap-live', 'state.json'), JSON.stringify({ cum: -1, days: {}, pos: { s: 'KTTA', qty: 27, px: 1.42, target: 1.56, stop: 1.136, date: '2026-11-25' }, buy: null }));
+  fs.writeFileSync(path.join(root, 'orb', 'data-gap-live', 'state.json'), JSON.stringify({ cum: -1, days: {}, legDate: '2026-11-25', legs: [
+    { st: 'hold', s: 'KTTA', qty: 27, px: 1.42, target: 1.56, stop: 1.136, date: '2026-11-25' }, { st: 'buy', s: 'ABCD', qty: 5, level: 1.2, date: '2026-11-25' }] }));
   answer = 1;
   assert.equal(await call('setMode', 'gap', 'off'), false);
   assert.match(rec.dialogs.at(-1).detail, /KTTA 27주를 들고 있어요/);
+  assert.match(rec.dialogs.at(-1).detail, /매수 주문 ABCD \$1\.2이 걸려 있어요/);
   assert.equal(st('gap').state, 'running');
   answer = 0;
   console.log('ok 5 보유 중일 때 끄기 경고');

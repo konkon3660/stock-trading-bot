@@ -59,29 +59,35 @@ function summary(root, key, mode) {
     count: trades.length,
     wins: trades.filter(t => t.pnl > 0).length,
     losses: trades.filter(t => t.pnl < 0).length,
-    pos: state?.pos ? { sym: state.pos.s, qty: state.pos.qty, px: state.pos.px, target: state.pos.target, stop: state.pos.stop, date: state.pos.date } : null,
-    buy: state?.buy ? { sym: state.buy.s, qty: state.buy.qty, level: state.buy.level, date: state.buy.date } : null,
+    legs: legsOf(state),
     lastLog, lastLine,
     trades,
   };
 }
+// 봇이 지금 들고 있는 종목·걸어 둔 매수 주문. 갭 봇은 2026-11-26부터 여러 종목(legs), 그 전 형식(pos·buy)도 읽음
+function legsOf(state) {
+  const one = (g, st) => ({ sym: g.s, st, qty: g.qty, px: g.px ?? null, target: g.target ?? null, stop: g.stop ?? null, level: g.level ?? null, t: g.t ?? null, orderT: g.orderT ?? null, date: g.date ?? null });
+  return [...(state?.legs ?? []).map(g => one(g, g.st)), ...(state?.pos ? [one(state.pos, 'hold')] : []), ...(state?.buy ? [one(state.buy, 'buy')] : [])];
+}
 
 function readStats(root) {
   const orb = path.join(root, 'orb');
-  const bots = {}, all = [];
+  const bots = {}, all = [], curve = [];
   for (const b of BOTS) {
     bots[b.key] = {};
     for (const mode of ['live', 'paper']) {
       const s = summary(root, b.key, mode);
-      if (s) { all.push(...s.trades); delete s.trades; }
+      if (s) { all.push(...s.trades); if (mode === 'live' && b.key !== 'hold') curve.push(...s.trades.filter(t => t.pnl !== null)); delete s.trades; }
       bots[b.key][mode] = s;
     }
   }
-  all.sort((a, b) => `${b.date}|${b.time}`.localeCompare(`${a.date}|${a.time}`));
+  const key = t => `${t.date}|${t.time}`;
+  all.sort((a, b) => key(b).localeCompare(key(a)));
+  curve.sort((a, b) => key(a).localeCompare(key(b))); // 실전 갭·애프터장 봇 거래 전부, 오래된 것부터 (봇이 번 돈 곡선)
   const flags = {};
   for (const f of ['STOP_GAP', 'STOP_HOLD', 'STOP_AH', 'FLATTEN_GAP']) flags[f] = fs.existsSync(path.join(orb, f));
-  const skip = (() => { try { return fs.readFileSync(path.join(orb, 'hold_skip.txt'), 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim()).filter(Boolean); } catch { return []; } })();
-  return { bots, trades: all.slice(0, 60), flags, limits: readJson(path.join(orb, 'live.json'), null), holdSkip: skip };
+  const only = (() => { try { return fs.readFileSync(path.join(orb, 'hold_only.txt'), 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim().toUpperCase()).filter(Boolean); } catch { return []; } })();
+  return { bots, trades: all.slice(0, 60), curve, flags, limits: readJson(path.join(orb, 'live.json'), null), holdOnly: only };
 }
 
 // 기록 파일 끝부분만 (큰 파일도 빠르게)

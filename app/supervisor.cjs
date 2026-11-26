@@ -9,9 +9,9 @@ const path = require('node:path');
 
 const BOTS = [
   { key: 'gap', name: '갭 봇', arg: null, stopFile: 'STOP_GAP', when: '정규장',
-    desc: '시가가 전일 종가보다 15%↑ 뜬 $1~3 종목을 시가 -5%에 사서 +10% 익절 · -20% 손절 · 마감 전 정리' },
+    desc: '시가가 전일 종가보다 15%↑ 뜬 $1~3 종목 중 갭 큰 5개에 현금을 나눠 시가 -5%에 지정가, +10% 익절, -20% 손절, 마감 전 정리' },
   { key: 'hold', name: '보유 주식 관리', arg: '--hold', stopFile: 'STOP_HOLD', when: '정규장',
-    desc: '봇이 사지 않은 미국 주식을 평균 매입가 대비 +10%↑ 또는 -20%↓이면 매도 (종목당 하루 한 번)' },
+    desc: 'orb\\hold_only.txt에 적은 미국 주식만 평균 매입가 대비 +10%↑ 또는 -20%↓이면 매도 (종목당 하루 한 번)' },
   { key: 'ah', name: '애프터장', arg: '--ah', stopFile: 'STOP_AH', when: '애프터장',
     desc: '정규장 종가가 15%↑ 오른 $1~20 종목을 종가 -10%에 사서 +10% 익절 · -20% 손절 · 19:50 정리' },
 ];
