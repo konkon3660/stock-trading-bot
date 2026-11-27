@@ -318,7 +318,8 @@ async function runDay(P, sess) {
   const active = () => legs.filter(g => g.st !== 'done');
   const persist = () => { if (LIVE) { S.legs = active(); S.legDate = sess.date; D.done = [...done]; saveState(S); } };
   if (now() < sess.open + 20_000) { log(`9:30 첫 분봉을 기다림 (${kst(sess.open + 20_000)}부터 후보 찾기)`); while (now() < sess.open + 20_000) await sleep(Math.min(10 * MIN, sess.open + 20_000 - now())); }
-  const lastEntry = sess.open + G.lastEntryMin * MIN, flatAt = sess.close - 2 * MIN, tag = sess.date.replace(/-/g, '');
+  // 매수 마감 = 14:30 ET, 반일장(13:00 마감)이면 종가 90분 전 (2026-11-27: 고정 14:30이면 반일장엔 지정가가 마감 직전까지 걸려 있음)
+  const lastEntry = Math.min(sess.open + G.lastEntryMin * MIN, sess.close - 90 * MIN), flatAt = sess.close - 2 * MIN, tag = sess.date.replace(/-/g, '');
   let scans = 0, nextScan = now(), lastStatus = 0, lastBlock = '';
   const blocked = () => {
     if (existsSync(STOP_F)) return 'STOP_GAP 파일';
