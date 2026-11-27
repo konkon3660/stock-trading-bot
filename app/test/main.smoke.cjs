@@ -67,7 +67,7 @@ async function until(fn, ms = 4000, what = '') { const t = Date.now(); while (Da
 
   await assert.rejects(() => rec.handlers.snapshot({ sender: {} }), /허용하지 않는/);
   const snap = await call('snapshot');
-  assert.equal(snap.bots.length, 3); assert.ok(snap.market.phase); assert.ok(snap.stats.limits);
+  assert.equal(snap.bots.length, 4); assert.equal(snap.bots.find(b => b.key === 'pre').paperOnly, true); assert.ok(snap.market.phase); assert.ok(snap.stats.limits);
   assert.equal(snap.settings.loginStart, true);
   win.show(); // 창을 열면 계좌를 읽음 → 실패가 기록돼야
   await until(async () => (await call('snapshot')).account.error, 6000, '계좌 실패 표시');

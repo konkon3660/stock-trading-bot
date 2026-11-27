@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { BOTS, readJson } = require('./supervisor.cjs');
+const FLAGS = [...BOTS.map(b => b.stopFile), 'FLATTEN_GAP']; // 화면에서 켜고 끌 수 있는 정지 파일
 
 function parseCsv(text) {
   const rows = []; let row = [], cell = '', q = false;
@@ -117,7 +118,7 @@ function readStats(root) {
   all.sort((a, b) => key(b).localeCompare(key(a)));
   curve.sort((a, b) => key(a).localeCompare(key(b))); // 실전 갭·애프터장 봇 거래 전부, 오래된 것부터 (봇이 번 돈 곡선)
   const flags = {};
-  for (const f of ['STOP_GAP', 'STOP_HOLD', 'STOP_AH', 'FLATTEN_GAP']) flags[f] = fs.existsSync(path.join(orb, f));
+  for (const f of FLAGS) flags[f] = fs.existsSync(path.join(orb, f));
   const skip = (() => { try { return fs.readFileSync(path.join(orb, 'hold_skip.txt'), 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim()).filter(Boolean); } catch { return []; } })();
   return { bots, trades: all.slice(0, 60), curve, flags, limits: readJson(path.join(orb, 'live.json'), null), holdSkip: skip };
 }
@@ -136,7 +137,7 @@ function tail(file, maxLines = 300, maxBytes = 96 * 1024) {
 }
 
 function setFlag(root, name, on, note) {
-  if (!['STOP_GAP', 'STOP_HOLD', 'STOP_AH', 'FLATTEN_GAP'].includes(name)) throw Error('없는 정지 파일이에요: ' + name);
+  if (!FLAGS.includes(name)) throw Error('없는 정지 파일이에요: ' + name);
   const f = path.join(root, 'orb', name);
   if (on) fs.writeFileSync(f, note || `토스 봇 화면에서 켬 ${new Date().toLocaleString('ko-KR')}\r\n`);
   else if (fs.existsSync(f)) fs.unlinkSync(f);

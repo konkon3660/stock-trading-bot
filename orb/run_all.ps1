@@ -1,22 +1,22 @@
-﻿# 봇 세 개(갭 봇 · 보유 주식 관리 · 애프터장)를 창 하나에서 같이 켜요. 켜고 끄는 건 orb\modes.json (live=실전, paper=연습, off=끔)
+﻿# 봇 네 개(갭 봇 · 보유 주식 관리 · 애프터장 · 프리장 연습)를 창 하나에서 같이 켜요. 켜고 끄는 건 orb\modes.json (live=실전, paper=연습, off=끔)
 # 실행: 프로젝트 폴더의 "봇켜기.cmd" 더블클릭, 또는  powershell -ExecutionPolicy Bypass -File .\orb\run_all.ps1
 # - 같은 봇이 이미 다른 창에서 돌면 그 봇은 여기서 안 켜요(running.pid로 확인).
 # - 봇이 오류로 멈추면 1분 뒤 다시 켜요(1시간에 5번 넘으면 그만).
-# - Ctrl+C 또는 창 닫기 → 셋 다 꺼지고 절전 방지도 풀려요.
+# - Ctrl+C 또는 창 닫기 → 모두 꺼지고 절전 방지도 풀려요.
 $sig = '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint esFlags);'
 $pw = Add-Type -MemberDefinition $sig -Name PowerAll -Namespace TossBots -PassThru
 $KEEP_AWAKE = [uint32]2147483649; $RELEASE = [uint32]2147483648
 [void]$pw::SetThreadExecutionState($KEEP_AWAKE)
 Set-Location (Split-Path $PSScriptRoot -Parent)
 $m = Get-Content .\orb\modes.json -Raw | ConvertFrom-Json
-$names = @{ gap = '갭 봇'; hold = '보유 주식 관리'; ah = '애프터장' }
+$names = @{ gap = '갭 봇'; hold = '보유 주식 관리'; ah = '애프터장'; pre = '프리장 연습' }
 $bots = @()
-foreach ($k in 'gap', 'hold', 'ah') {
+foreach ($k in 'gap', 'hold', 'ah', 'pre') {
   $mode = $m.$k
   if (-not $mode -or $mode -eq 'off') { Write-Host ("[{0}] 꺼 둠 (orb\modes.json)" -f $names[$k]); continue }
   $a = @('orb/gap_dip.mjs')
-  if ($k -eq 'hold') { $a += '--hold' } elseif ($k -eq 'ah') { $a += '--ah' }
-  if ($mode -eq 'live') { $a += '--live' }
+  if ($k -ne 'gap') { $a += "--$k" }
+  if ($mode -eq 'live' -and $k -ne 'pre') { $a += '--live' }  # 프리장은 연습 전용
   $bots += [pscustomobject]@{ Key = $k; Name = $names[$k]; Mode = $mode; Args = $a; Proc = $null; Starts = @() }
 }
 function Start-Bot($b) {

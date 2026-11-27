@@ -14,6 +14,8 @@ const BOTS = [
     desc: '봇이 사지 않은 미국 주식을 평균 매입가 대비 +10%↑ 또는 -20%↓이면 매도 (종목당 하루 한 번)' },
   { key: 'ah', name: '애프터장', arg: '--ah', stopFile: 'STOP_AH', when: '애프터장',
     desc: '정규장 종가가 15%↑ 오른 $1~20 종목을 종가 -10%에 사서 +10% 익절 · -20% 손절 · 19:50 정리' },
+  { key: 'pre', name: '프리장 연습', arg: '--pre', stopFile: 'STOP_PRE', when: '프리장', paperOnly: true, // 주문 코드 없음 (기록 모으기용, 2026-11-27)
+    desc: '프리장에 전 정규장 종가보다 15%↑ 오른 $1~20 종목을 그 가격 -5%에 가상으로 사서 +10% / -20% / 9:25 정리 — 주문 없이 기록만' },
 ];
 const MODES = ['live', 'paper', 'off'];
 const HOUR = 3_600_000;
@@ -141,6 +143,7 @@ class Supervisor extends EventEmitter {
     if (!this.bots.has(key)) throw Error('없는 봇이에요: ' + key);
     if (!MODES.includes(mode)) throw Error('모드는 live/paper/off 중 하나예요');
     const b = this.bots.get(key);
+    if (mode === 'live' && b.paperOnly) throw Error(`${b.name}은(는) 연습 전용이에요 (주문 코드 없음)`);
     this.writeModes({ [key]: mode });
     if (mode === 'off') { b.wanted = false; await this.stop(key); return; }
     if (b.child && b.mode !== mode) { await this.stop(key); }
@@ -179,7 +182,7 @@ class Supervisor extends EventEmitter {
     return BOTS.map(d => {
       const b = this.bots.get(d.key), mode = modes[d.key];
       return {
-        key: d.key, name: d.name, desc: d.desc, when: d.when, stopFile: d.stopFile, mode,
+        key: d.key, name: d.name, desc: d.desc, when: d.when, stopFile: d.stopFile, paperOnly: !!d.paperOnly, mode,
         runMode: b.child ? b.mode : null, state: b.state, pid: b.pid, since: b.child ? b.since : null,
         retryAt: b.retryAt, restarts: Math.max(0, b.starts.filter(t => t > Date.now() - HOUR).length - 1),
         lastExit: b.lastExit, err: b.err.slice(-8), ext: b.child ? null : this.lockPid(d.key, mode),
