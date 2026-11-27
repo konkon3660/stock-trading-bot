@@ -8,16 +8,28 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="mark" id="mark" aria-hidden="true"></span><h1>토스 봇</h1></div>
+  <div class="brand"><span class="mark" id="mark" aria-hidden="true"></span><h1>토스 봇</h1><span class="lamp-txt" id="lamp-txt"></span></div>
   <div class="clock" id="clock" aria-live="polite"></div>
   <div class="wallet" id="wallet"></div>
 </header>
 
-<section class="night" id="night" aria-label="오늘 밤 미국장 일정과 봇이 일하는 시간"></section>
+<nav class="views" role="tablist" aria-label="화면 고르기">
+  <button role="tab" id="view-now" aria-selected="true" data-act="view" data-view="now">지금</button>
+  <button role="tab" id="view-league" aria-selected="false" data-act="view" data-view="league">봇 리그</button>
+</nav>
 
-<section class="reel" id="reel" aria-label="갭 후보 차트" hidden></section>
+<section class="night now-only" id="night" aria-label="오늘 밤 미국장 일정과 봇이 일하는 시간"></section>
 
-<main class="deck">
+<section class="reel now-only" id="reel" aria-label="갭 후보 차트" hidden></section>
+
+<main class="league" id="league" aria-label="봇 리그" hidden>
+  <div class="league-head">
+    <div><h2>봇 리그</h2><p class="meta" id="league-meta"></p></div>
+  </div>
+  <div id="league-body"></div>
+</main>
+
+<main class="deck now-only">
   <section class="panel held" aria-labelledby="h-held">
     <div class="panel-head"><h2 id="h-held">지금 들고 있는 것</h2></div>
     <div class="panel-body" id="held"></div>
@@ -40,8 +52,7 @@
 <footer class="foot">
   <label class="switch"><input type="checkbox" id="set-login"><span>PC 켤 때 자동으로 켜기</span></label>
   <label class="switch"><input type="checkbox" id="set-notify"><span>체결·청산·오류 알림</span></label>
-  <button class="btn ghost" data-act="shortcuts">바로가기 다시 만들기</button>
-  <button class="btn ghost" data-act="open" data-what="project">프로젝트 폴더</button>
+  <button class="btn ghost" data-act="open" data-what="project">봇 폴더 열기</button>
   <span class="grow"></span>
   <label class="switch danger" title="갭 봇·애프터장 봇이 산 주식을 바로 팔고, 끌 때까지 새로 사지 않아요"><input type="checkbox" id="flag-flatten"><span>봇이 산 주식 지금 다 팔기</span></label>
   <button class="btn" data-act="quit">토스 봇 종료</button>

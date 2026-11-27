@@ -35,7 +35,7 @@ const krw = v => (!Number.isFinite(v) ? '–' : `${Math.round(v).toLocaleString(
 const pctTxt = r => (!Number.isFinite(r) ? '–' : `${r > 0 ? '+' : r < 0 ? '−' : ''}${Math.abs(r * 100).toFixed(1)}%`);
 const mdOf = date => `${Number(date.slice(5, 7))}/${Number(date.slice(8))}`;
 const MODE = { live: '실전', paper: '연습', off: '끔' };
-const SHORT = { gap: '갭', hold: '보유', ah: '애프터' };
+const SHORT = { gap: '갭', hold: '보유', ah: '애프터', pre: '프리' };
 function kstOf(date, t) { // trades.csv의 'MM-DD HH:MM:SS'(KST) → ms
   const m = /^(\d\d)-(\d\d) (\d\d:\d\d(?::\d\d)?)/.exec(t || ''); if (!m || !date) return NaN;
   let y = Number(date.slice(0, 4)); if (m[1] === '01' && date.slice(5, 7) === '12') y++;
@@ -65,7 +65,9 @@ function lampState() {
   return 'idle';
 }
 function renderTop() {
-  $('mark').className = 'mark ' + lampState();
+  const lamp = lampState();
+  $('mark').className = 'mark ' + lamp;
+  $('lamp-txt').textContent = { live: '실전 봇 도는 중', paper: '연습 봇만 도는 중', alert: '멈춘 봇 있음', idle: '봇 모두 꺼짐' }[lamp];
   const m = snap.market, now = snap.now;
   put($('clock'), !m ? '<p class="phase-line">장 시간을 확인하는 중이에요</p>' : (() => {
     const at = m.next?.at, day = at && md(at) !== md(now) ? `${md(at)} ` : '';
@@ -88,11 +90,11 @@ function frame() { // 프리장 시작 ~ 애프터장 끝 (한국 시각으로 �
   return { s, close, F0: s.open - 5.5 * HOUR, F1: close + 4 * HOUR, past, next };
 }
 const at = (f, t) => Math.max(0, Math.min(100, ((t - f.F0) / (f.F1 - f.F0)) * 100));
-const workOf = (f, key) => ({ gap: [f.s.open, f.close - 2 * MIN], hold: [f.s.open + MIN, f.close], ah: [f.close, f.close + 230 * MIN] }[key]);
+const workOf = (f, key) => ({ gap: [f.s.open, f.close - 2 * MIN], hold: [f.s.open + MIN, f.close], ah: [f.close, f.close + 230 * MIN], pre: [f.F0 + 15 * MIN, f.s.open - 5 * MIN] }[key]);
 function statusOf(b) {
   const now = snap.now, ex = b.lastExit;
   switch (b.state) {
-    case 'running': return ['running', '돌고 있음', `${dur(now - b.since)}째${b.restarts ? `, 1시간에 ${b.restarts}번 다시 켬` : ''}`];
+    case 'running': return ['running', '돌고 있음', b.restarts ? `멈춰서 1시간에 ${b.restarts}번 다시 켰어요` : ''];
     case 'waiting': return ['waiting', '멈춤', `${Math.max(0, Math.round((b.retryAt - now) / 1000))}초 뒤 다시 켜요 (코드 ${ex?.code ?? '?'})`];
     case 'gave-up': return ['gave-up', '멈춤', '여러 번 멈춰서 쉬는 중'];
     case 'external': return ['external', '다른 창에서 실행 중', ''];
@@ -108,11 +110,10 @@ function doingHtml(s) {
 function laneHtml(b, f) {
   const s = summaryFor(b), on = !!snap.stats.flags[b.stopFile], [cls, label, sub] = statusOf(b);
   const main = b.state === 'gave-up' || b.state === 'stopped' ? `<button class="btn strong" data-act="restart" data-key="${b.key}">${b.state === 'stopped' ? '켜기' : '다시 켜기'}</button>`
-    : b.state === 'external' ? `<button class="btn strong" data-act="takeover" data-key="${b.key}">여기서 켜기</button>`
-    : b.state === 'running' ? `<button class="btn ghost" data-act="restart" data-key="${b.key}">다시 켜기</button>` : '';
+    : b.state === 'external' ? `<button class="btn strong" data-act="takeover" data-key="${b.key}">여기서 켜기</button>` : '';
   const head = `<div class="lane-head${b.mode === 'off' ? ' off' : ''}">
     <div class="lh-top"><h3 title="${esc(b.desc)}">${esc(b.name)}</h3><span class="st ${cls}">${label}</span>${sub ? `<span class="st-sub">${esc(sub)}</span>` : ''}<span class="grow"></span>
-      <div class="mode" role="group" aria-label="${esc(b.name)} 모드">${['live', 'paper', 'off'].map(m => `<button class="${m}" aria-pressed="${b.mode === m}" data-act="mode" data-key="${b.key}" data-mode="${m}">${MODE[m]}</button>`).join('')}</div></div>
+      <div class="mode" role="group" aria-label="${esc(b.name)} 모드">${(b.paperOnly ? ['paper', 'off'] : ['live', 'paper', 'off']).map(m => `<button class="${m}" aria-pressed="${b.mode === m}" data-act="mode" data-key="${b.key}" data-mode="${m}">${MODE[m]}</button>`).join('')}</div></div>
     ${doingHtml(s)}
     <div class="lh-act"><label class="switch${on ? ' on' : ''}" title="orb\\${b.stopFile} 파일"><input type="checkbox" data-act="flag" data-name="${b.stopFile}" ${on ? 'checked' : ''}><span>${b.key === 'hold' ? '팔지 않기' : '새로 사지 않기'}</span></label>${main}<button class="btn ghost" data-act="log" data-key="${b.key}">기록</button></div>
   </div>`;
@@ -145,7 +146,8 @@ function renderNight() {
     else if (f.past) sky += `<div class="offframe">지난밤 (${mdOf(f.s.date)} 미국장). 다음 프리장은 ${dur(f.next.open - 5.5 * HOUR - now)} 뒤 ${hm(f.next.open - 5.5 * HOUR)}에 열려요</div>`;
     else if (now < f.F0) sky += `<div class="offframe">지금 ${hm(now)}, ${dur(f.F0 - now)} 뒤 프리장이 열려요</div>`;
   }
-  put($('night'), `<div class="sky">${sky}</div><div class="corner"></div><div class="labels"></div>${snap.bots.map(b => laneHtml(b, f)).join('')}<div class="corner foot-row"></div><div class="foot-row"></div>`);
+  const legend = f ? '<div class="corner legend"><span><i class="lg-work"></i>봇이 일하는 시간 (파란 줄무늬는 연습)</span><span><i class="lg-dot up"></i><i class="lg-dot down"></i>판 거래 (빨강 이익, 파랑 손실, 클수록 큰 돈)</span><span><i class="lg-leg"></i>지금 들고 있음</span></div>' : '<div class="corner"></div>';
+  put($('night'), `<div class="sky">${sky}</div>${legend}<div class="labels"></div>${snap.bots.map(b => laneHtml(b, f)).join('')}<div class="corner foot-row"></div><div class="foot-row"></div>`);
 }
 
 // ---------- 갭 후보 차트: 봇이 9:30에 찾은 후보마다 그날 1분봉 + 시가·지정가 선 + 산 곳▲·판 곳▼ ----------
@@ -160,7 +162,11 @@ function chartOf(sym, from, to) { // 없으면 받아 오고(앱 본체가 캐�
   }
   return h?.bars ?? null;
 }
-const STATUS = { seen: ['기다리는 중', ''], ordered: ['주문 걸어 둠', 'lamp'], held: ['들고 있음', 'lamp'], missed: ['닿고 튐', ''], nocash: ['현금 부족', ''], full: ['자리 없음', ''], expired: ['안 닿음', ''], closed: ['팔았음', ''] };
+const STATUS = { // [칩, 색, 마우스 올리면 나오는 설명]
+  seen: ['기다리는 중', '', '아직 지정가에 안 닿았어요'], ordered: ['주문 걸어 둠', 'lamp', '지정가 매수 주문이 토스에 걸려 있어요'], held: ['들고 있음', 'lamp', '사서 들고 있어요'],
+  missed: ['이미 닿아서 안 삼', '', '봇이 주문을 걸기 전에 가격이 지정가를 이미 찍었어요. 백테스트는 처음 닿을 때 사서, 늦게는 안 따라 사요'],
+  nocash: ['돈 부족', '', '나눈 돈으로 1주도 못 사서 건너뛰었어요'], full: ['주문 수 다 씀', '', '오늘 걸 수 있는 매수 주문 수(live.json gapSlots)를 다 써서 안 샀어요'],
+  expired: ['안 닿아서 취소', '', '14:30(ET)까지 지정가에 안 닿아서 주문을 거뒀어요'], closed: ['팔았음', '', ''] };
 function sparkSvg(bars, o) {
   const W = 300, H = 104, P = 7, pts = bars.map(b => b.c), marks = [...o.buys, ...o.sells].filter(m => m.p > 0 && Number.isFinite(m.t));
   let lo = Math.min(...pts, ...[o.open, o.level].filter(v => v > 0), ...marks.map(m => m.p)), hi = Math.max(...pts, ...[o.open, o.level, o.target].filter(v => v > 0), ...marks.map(m => m.p));
@@ -183,8 +189,8 @@ function tradeCard({ sym, bot, c, ts, leg, from, to }) {
   const buys = [...new Map([...ts.filter(t => t.buyTime).map(t => [t.buyTime, { t: kstOf(t.date, t.buyTime), p: t.buyPx }]), ...(leg?.t ? [['leg', { t: leg.t, p: leg.px }]] : [])]).values()];
   const sells = ts.map(t => ({ t: kstOf(t.date, t.time), p: t.sellPx, cls: signCls(t.pnl) }));
   const t0 = ts[0], target = leg?.target ?? t0?.target, stop = leg?.stop ?? t0?.stop;
-  const [stTxt, stCls] = STATUS[c?.status] ?? STATUS.seen;
-  const chip = ts.length ? `<span class="chip ${signCls(pnl)}">${esc([...new Set(ts.map(t => t.reason))].join(', '))} ${usd(pnl)}</span>` : `<span class="chip ${stCls}">${stTxt}</span>`;
+  const [stTxt, stCls, stTip] = STATUS[c?.status] ?? STATUS.seen;
+  const chip = ts.length ? `<span class="chip ${signCls(pnl)}">${esc([...new Set(ts.map(t => t.reason))].join(', '))} ${usd(pnl)}</span>` : `<span class="chip ${stCls}" title="${esc(stTip)}">${stTxt}</span>`;
   const ref = c?.o ?? bars?.[0]?.c, tip = bars?.at(-1), chg = tip && ref ? tip.c / ref - 1 : NaN, past = to < snap.now;
   const cardCls = ts.length ? (pnl > 0.004 ? 'won' : pnl < -0.004 ? 'lost' : '') : c?.status === 'held' || c?.status === 'ordered' ? 'live' : '';
   const body = bars === undefined ? '<div class="spark-wait">앱을 다시 켜면 차트가 나와요</div>'
@@ -204,12 +210,15 @@ function renderReel() {
   const open = ses?.open ?? board.open, close = ses?.close ?? open + 6.5 * HOUR;
   const trades = visibleTrades().filter(t => t.date === board.date), legs = legsOf(snap.stats.bots.gap?.live);
   const tonight = m?.session?.date === board.date && m.phase !== 'closed';
-  let cards = board.list.map(c => tradeCard({ sym: c.s, bot: 'gap', c, ts: trades.filter(t => t.bot === 'gap' && t.sym === c.s), leg: legs.find(g => g.sym === c.s && g.st === 'hold'), from: open, to: close }));
-  const others = new Map(); // 같은 밤 애프터장·보유 관리 거래도 같은 모양으로
+  const cards = board.list.map(c => tradeCard({ sym: c.s, bot: 'gap', c, ts: trades.filter(t => t.bot === 'gap' && t.sym === c.s), leg: legs.find(g => g.sym === c.s && g.st === 'hold'), from: open, to: close }));
+  const others = new Map(), rest = []; // 같은 밤 애프터장·보유 관리 거래는 따로 제목을 달아 아래에
   for (const t of trades.filter(t => t.bot !== 'gap')) { const k = `${t.bot}|${t.sym}`; others.set(k, [...(others.get(k) ?? []), t]); }
-  for (const ts of others.values()) { const ah = ts[0].bot === 'ah'; cards.push(tradeCard({ sym: ts[0].sym, bot: ts[0].bot, ts, from: ah ? close : open, to: ah ? close + 4 * HOUR : close })); }
+  const spanOf = bot => (bot === 'ah' ? [close, close + 4 * HOUR] : bot === 'pre' ? [open - 5.5 * HOUR, open] : [open, close]);
+  for (const ts of others.values()) { const [from, to] = spanOf(ts[0].bot); rest.push(tradeCard({ sym: ts[0].sym, bot: ts[0].bot, ts, from, to })); }
+  const lg = (cls, txt) => `<span class="lg"><i class="lg-line ${cls}"></i>${txt}</span>`;
   el.hidden = false;
-  put(el, `<div class="reel-head"><h2>${tonight ? '오늘 밤' : '지난밤'} 갭 후보</h2><span class="meta">${mdOf(board.date)} 미국장, 갭 큰 순서. 시가 -5% 지정가(노란 점선)에 닿으면 사요</span></div><div class="reel-grid">${cards.join('')}</div>`);
+  put(el, `<div class="reel-head"><h2>${tonight ? '오늘 밤' : '지난밤'} 갭 후보</h2><span class="meta">${mdOf(board.date)} 미국장, 갭 큰 순서</span><span class="legend">${lg('open', '시가')}${lg('level', '지정가 = 시가 -5%, 닿으면 삼')}${lg('target', '목표 +10%')}${lg('stop', '손절 -20%')}<span class="lg"><b class="tri buy">▲</b>산 곳 <b class="tri sell">▼</b>판 곳</span></span></div>`
+    + `<div class="reel-grid">${cards.join('')}${rest.length ? `<h3 class="reel-sub">같은 밤 다른 봇 거래</h3>${rest.join('')}` : ''}</div>`);
 }
 
 // ---------- 지금 들고 있는 것 ----------
@@ -321,6 +330,74 @@ async function loadLog() {
   if (b && (b.state === 'waiting' || b.state === 'gave-up') && r.err?.length) { err.hidden = false; err.textContent = '마지막 오류 출력\n' + r.err.slice(-8).join('\n'); } else err.hidden = true;
 }
 
+// ---------- 봇 리그: 성격이 다른 가상 봇 5마리의 2년 리플레이 (history/mine/league_sim.py → orb/league/league.json) ----------
+let view = 'now', leagueRes = null, leagueBusy = false, leagueAt = 0;
+const LEAGUE_COLORS = ['#f5b544', '#ff6b6b', '#5ab0ff', '#b9a6ff', '#6fd3a0'];
+function setView(v) {
+  view = v;
+  document.body.classList.toggle('v-league', v === 'league');
+  for (const id of ['now', 'league']) { const b = $(`view-${id}`); b.setAttribute('aria-selected', String(id === v)); }
+  if (v === 'league') { void loadLeague(); renderLeague(); }
+}
+async function loadLeague() {
+  if (!API?.league || leagueBusy) return;
+  leagueBusy = true;
+  try { leagueRes = await API.league(); } catch (e) { leagueRes = { ok: false, reason: msgOf(e) }; }
+  finally { leagueBusy = false; leagueAt = Date.now(); }
+  renderLeague();
+}
+function leagueCurve(doc, colors) {
+  const W = 720, H = 300, L = 52, R = 14, T = 12, B = 28, n = doc.bots[0].daily.length + 1;
+  const lv = v => Math.log10(Math.max(0.01, v));
+  const all = doc.bots.flatMap(b => [doc.cash, ...b.daily.map(x => x.equity)]).map(lv);
+  const lo = Math.floor(Math.min(...all)), hi = Math.ceil(Math.max(...all)), span = Math.max(1, hi - lo);
+  const x = i => L + (i / (n - 1)) * (W - L - R), y = v => T + ((hi - lv(v)) / span) * (H - T - B);
+  let grid = '';
+  for (let e = lo; e <= hi; e++) grid += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(10 ** e).toFixed(1)}" y2="${y(10 ** e).toFixed(1)}"/><text x="${L - 8}" y="${(y(10 ** e) + 4).toFixed(1)}" text-anchor="end">$${10 ** e < 1 ? (10 ** e).toFixed(2) : (10 ** e).toLocaleString('en-US')}</text>`;
+  const days = doc.bots[0].daily; let ax = '';
+  for (const k of [0, Math.floor((days.length - 1) / 2), days.length - 1]) ax += `<text x="${x(k + 1).toFixed(1)}" y="${H - 6}" text-anchor="${k === 0 ? 'start' : k === days.length - 1 ? 'end' : 'middle'}">${esc(days[k]?.date.slice(0, 7).replace('-', '.') ?? '')}</text>`;
+  const lines = doc.bots.map((b, bi) => {
+    const pts = [doc.cash, ...b.daily.map(x => x.equity)];
+    const d = pts.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
+    return `<path class="lg-curve" d="${d}" stroke="${colors[bi]}"><title>${esc(b.name)}: 최종 ${usd(b.summary.equity, { sign: false })}</title></path>`;
+  }).join('');
+  return `<svg class="curve league-curve" viewBox="0 0 ${W} ${H}" role="img" aria-label="봇 다섯 마리의 가상 자산 곡선, 세로축은 로그">
+    <line class="ref" x1="${L}" x2="${W - R}" y1="${y(doc.cash).toFixed(1)}" y2="${y(doc.cash).toFixed(1)}"/>${grid}${lines}${ax}</svg>`;
+}
+function renderLeague() {
+  if (view !== 'league') return;
+  const body = $('league-body'), meta = $('league-meta');
+  if (!API?.league) { meta.textContent = ''; put(body, '<p class="empty">앱을 다시 켜면 봇 리그 탭이 나와요.</p>'); return; }
+  if (!leagueRes) { put(body, '<p class="empty">리그 기록을 불러오는 중이에요</p>'); return; }
+  if (!leagueRes.ok) { meta.textContent = ''; put(body, `<p class="empty">${esc(leagueRes.reason)}</p>`); return; }
+  const doc = leagueRes.doc, colors = doc.bots.map((_, i) => LEAGUE_COLORS[i % LEAGUE_COLORS.length]);
+  meta.textContent = `${mdOf(doc.start)} ~ ${mdOf(doc.end)}, 가상 자금 ${usd(doc.cash, { sign: false })}. 실제 주문 아님. 만든 시각 ${doc.generatedAt.replace('T', ' ')}`;
+  const ranked = doc.bots.map((b, i) => ({ ...b, color: colors[i] })).sort((a, b) => b.summary.equity - a.summary.equity);
+  const legend = ranked.map(b => `<span class="lg-item"><i style="background:${b.color}"></i>${esc(b.name)}</span>`).join('');
+  const cards = ranked.map((b, rank) => {
+    const s = b.summary, r = s.total;
+    return `<article class="lcard" style="--c:${b.color}">
+      <header><span class="rank">${rank + 1}</span><b>${esc(b.name)}</b><span class="rule">${esc(b.desc)}</span></header>
+      <div class="lnums"><div><span>최종</span><b>${usd(s.equity, { sign: false })}</b><small class="${signCls(r)}">${pctTxt(r)}</small></div>
+        <div><span>최근 30일</span><b class="${signCls(s.last30)}">${pctTxt(s.last30)}</b></div>
+        <div><span>최대 낙폭</span><b class="down">${pctTxt(s.maxDrawdown)}</b></div></div>
+      <p class="lsub">거래 ${s.trades}건 (이긴 ${s.wins} · 진 ${s.losses}), 거래한 날 ${s.tradeDays}일, 이긴 날 ${s.winDays}일 · 하루 최고 ${pctTxt(s.bestDay)} / 최악 ${pctTxt(s.worstDay)}</p>
+    </article>`;
+  }).join('');
+  const lastDay = doc.bots.map(b => [b, [...b.daily].reverse().find(x => x.trades.length)]).filter(([, d]) => d);
+  const lastDate = lastDay.length ? lastDay.map(([, d]) => d.date).sort().pop() : null;
+  const talk = lastDate ? doc.bots.map((b, bi) => {
+    const d = b.daily.find(x => x.date === lastDate), ts = d?.trades ?? [];
+    const txt = ts.length ? ts.map(t => `<li>${esc(t.sym)} · 갭 +${Math.round(t.gap * 100)}% · $${t.entry.toFixed(2)} → $${t.exit.toFixed(2)} <b class="${t.ret > 0 ? 'up' : t.ret < 0 ? 'down' : ''}">${esc(t.reason)} ${pctTxt(t.ret)}</b></li>`).join('') : '<li class="muted">이날은 안 샀어요</li>';
+    return `<div class="talk" style="--c:${colors[bi]}"><h3>${esc(b.name)}</h3><ul>${txt}</ul></div>`;
+  }).join('') : '';
+  put(body, `<div class="league-legend">${legend}</div>
+    <div class="league-chart">${leagueCurve(doc, colors)}<p class="note">세로축은 로그 눈금이에요. 한 칸 위가 배수로 두 배씩. 점선은 시작 자금.</p></div>
+    <div class="lcards">${cards}</div>
+    ${lastDate ? `<h3 class="reel-sub">${mdOf(lastDate)} 하루, 봇들이 한 일</h3><div class="talks">${talk}</div>` : ''}
+    <p class="note">${esc(doc.note)} 실제 장에서 한 게 아니라 과거 같은 날 같은 호가 기준으로 흉내 낸 결과예요. 랜덤봇은 난수 한 번(seed 7) 결과라 운이 크게 작용해요.</p>`);
+}
+
 // ---------- 바닥 ----------
 function renderFoot() {
   $('set-login').checked = !!snap.settings.loginStart;
@@ -343,13 +420,13 @@ async function act(fn, done) {
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-act]'); if (!t || t.tagName === 'INPUT') return;
   const { act: a, key, mode, what } = t.dataset;
-  if (a === 'mode') { if (snap.bots.find(b => b.key === key)?.mode === mode) return; t.parentElement.querySelectorAll('button').forEach(x => { x.disabled = true; }); act(() => API.setMode(key, mode)); }
+  if (a === 'view') setView(t.dataset.view);
+  else if (a === 'mode') { if (snap.bots.find(b => b.key === key)?.mode === mode) return; t.parentElement.querySelectorAll('button').forEach(x => { x.disabled = true; }); act(() => API.setMode(key, mode)); }
   else if (a === 'restart') act(() => API.restart(key), '다시 켰어요');
   else if (a === 'takeover') act(() => API.takeOver(key));
   else if (a === 'log') { logKey = key; renderTabs(); void loadLog().then(() => { if (key !== 'trades') $('log-body').scrollTop = 1e9; }); }
   else if (a === 'open') act(() => API.openPath(what));
   else if (a === 'refresh-account') act(() => API.refreshAccount());
-  else if (a === 'shortcuts') act(() => API.makeShortcuts().then(n => { toast(n ? `바로가기 ${n}개를 만들었어요` : '바로가기를 못 만들었어요'); return false; }));
   else if (a === 'quit') act(() => API.quit());
 });
 document.addEventListener('change', e => {
@@ -368,4 +445,5 @@ if (API) {
   refresh().then(loadLog);
   setInterval(() => { if (!document.hidden) refresh(); }, 4000);
   setInterval(() => { if (!document.hidden) loadLog(); }, 6000);
+  setInterval(() => { if (!document.hidden && view === 'league' && Date.now() - leagueAt > 60_000) void loadLeague(); }, 15_000);
 }

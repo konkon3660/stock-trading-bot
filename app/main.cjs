@@ -10,6 +10,7 @@ const { execFileSync } = require('node:child_process');
 const { Supervisor } = require('./supervisor.cjs');
 const { readStats, tail, setFlag } = require('./stats.cjs');
 const { TossReader } = require('./toss.cjs');
+const { readLeague } = require('./league.cjs');
 const { marketNow, etToMs } = require('./market.cjs');
 const icons = require('./icons.cjs');
 
@@ -246,13 +247,13 @@ function start() {
       if (!/^[A-Z0-9.]{1,12}$/.test(s) || !Number.isFinite(a) || !Number.isFinite(z) || z <= a || z - a > 2 * 86_400_000) throw Error('차트 요청이 이상해요');
       return toss.chart(s, a, z);
     });
+    handle('league', () => readLeague(ROOT)); // 봇 리그 탭 (읽기만)
     handle('setSetting', (key, value) => {
       if (!['loginStart', 'notify'].includes(key)) throw Error('없는 설정이에요');
       settings[key] = !!value; saveSettings();
       if (key === 'loginStart') applyLoginStart();
       return true;
     });
-    handle('makeShortcuts', () => makeShortcuts().length);
     handle('openPath', what => {
       const [kind, key] = String(what).split(':');
       if (kind === 'project') return shell.openPath(ROOT);

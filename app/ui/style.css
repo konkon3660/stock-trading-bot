@@ -235,6 +235,56 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .foot .grow { flex: 1; }
 .toast { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); background: var(--lamp); color: var(--lamp-ink); padding: 10px 16px; border-radius: 10px; font-size: 14.5px; font-weight: 650; max-width: 70vw; }
 
+/* ---------- 범례 (타임라인·후보 차트) ---------- */
+.lamp-txt { font-size: 13px; color: var(--mist); }
+.night .legend { display: flex; flex-wrap: wrap; align-content: center; gap: 2px 14px; height: auto; min-height: 40px; padding: 2px 12px 6px 0; font-size: 12.5px; color: var(--mist); }
+.night .legend span { white-space: nowrap; display: inline-flex; align-items: center; }
+.lg-work { width: 18px; height: 6px; border-radius: 3px; background: var(--lamp); margin-right: 6px; }
+.lg-dot { width: 9px; height: 9px; border-radius: 50%; margin-right: 3px; } .lg-dot.up { background: var(--up); } .lg-dot.down { background: var(--down); margin-right: 6px; }
+.lg-leg { width: 8px; height: 8px; transform: rotate(45deg); background: var(--lamp); margin: 0 7px 0 2px; }
+.reel-head { flex-wrap: wrap; }
+.reel-head .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-left: auto; font-size: 12.5px; color: var(--mist); }
+.lg { white-space: nowrap; display: inline-flex; align-items: center; }
+.lg-line { width: 18px; border-top: 2px dashed; margin-right: 6px; }
+.lg-line.open { border-top-style: dotted; border-color: var(--mist); } .lg-line.level { border-color: var(--lamp); } .lg-line.target { border-color: var(--up); } .lg-line.stop { border-color: var(--down); }
+.tri { font-size: 11px; margin-right: 4px; } .tri.buy { color: var(--lamp); } .tri.sell { color: var(--ink); margin-left: 4px; }
+.reel-sub { grid-column: 1 / -1; font-size: 13.5px; font-weight: 700; color: var(--mist); margin-top: 6px; }
+
+/* ---------- 화면 고르기 (지금 / 봇 리그) ---------- */
+.views { display: flex; gap: 4px; padding: 0 32px; border-bottom: 1px solid var(--ridge); }
+.views button { background: none; border: 0; padding: 8px 14px 10px; font-size: 14.5px; font-weight: 700; color: var(--mist); }
+.views button[aria-selected='true'] { color: var(--ink); box-shadow: inset 0 -2px var(--lamp); }
+.v-league .now-only { display: none; }
+.league:not([hidden]) { padding: 18px 32px 24px; }
+.league-head h2 { font-size: 17px; font-weight: 700; }
+.league-head .meta { font-size: 12.5px; color: var(--mist); margin-top: 2px; }
+.league-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--mist); margin: 6px 0 4px; }
+.lg-item { display: inline-flex; align-items: center; gap: 6px; }
+.lg-item i { width: 14px; height: 4px; border-radius: 2px; display: inline-block; }
+.league-chart { background: var(--dusk); border: 1px solid #1d2c46; border-radius: 14px; padding: 8px 16px 10px; }
+.league-curve { max-height: 360px; }
+.league-curve text { fill: var(--mist); font-size: 11px; font-family: inherit; }
+.league-curve .grid { stroke: var(--ridge); stroke-width: 1; }
+.league-curve .ref { stroke: var(--mist); stroke-dasharray: 4 5; stroke-width: 1; opacity: .7; }
+.lg-curve { fill: none; stroke-width: 2.2; stroke-linejoin: round; }
+.lcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-top: 14px; }
+.lcard { background: var(--dusk); border: 1px solid #1d2c46; border-left: 4px solid var(--c); border-radius: 12px; padding: 12px 16px; }
+.lcard header { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.lcard .rank { font-size: 12.5px; font-weight: 700; color: var(--c); }
+.lcard header b { font-size: 15.5px; }
+.lcard .rule { font-size: 12.5px; color: var(--mist); flex-basis: 100%; }
+.lnums { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 8px; margin: 8px 0 4px; }
+.lnums span { display: block; font-size: 12px; color: var(--mist); }
+.lnums b { font-size: 18px; font-weight: 700; }
+.lnums small { font-size: 13px; font-weight: 700; margin-left: 4px; }
+.lsub { font-size: 12.5px; color: var(--mist); }
+.talks { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.talk { background: var(--dusk); border: 1px solid #1d2c46; border-top: 3px solid var(--c); border-radius: 12px; padding: 10px 14px; }
+.talk h3 { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+.talk ul { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.talk li { padding: 3px 0; border-top: 1px solid var(--ridge); }
+.talk li:first-child { border-top: 0; }
+
 @media (max-width: 1200px) { :root { --head: 320px; } .count { font-size: 46px; } }
 @media (max-width: 1040px) { .deck { grid-template-columns: 1fr; grid-template-areas: 'held' 'score' 'acct' 'feed'; } }
 @media (max-width: 860px) {
